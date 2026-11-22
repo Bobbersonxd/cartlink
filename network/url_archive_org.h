@@ -30,8 +30,11 @@ RETRO_BEGIN_DECLS
  * on "success": true, copies values.s3.access / values.s3.secret out
  * and saves them with url_logins_set_archive_keys. The password is only
  * held in a stack buffer here (wiped before returning) and is never
- * stored or logged. Redirects are not followed. On failure, err gets a
- * short reason. */
+ * stored or logged. Redirects are not followed. Over https the
+ * password is only sent if archive.org's certificate verifies against
+ * the system CAs. The JSON reply is read whatever the HTTP status, so
+ * a refused login gives its reason. On failure, err gets a short
+ * reason. */
 bool url_archive_org_login(const char *email, const char *password,
       char *access, size_t alen, char *secret, size_t slen,
       char *err, size_t elen);

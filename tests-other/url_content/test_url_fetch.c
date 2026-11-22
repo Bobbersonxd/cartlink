@@ -13,7 +13,8 @@
  */
 
 /* Tests for network/url_fetch.c against serve.py on 127.0.0.1.
- * Usage: test_url_fetch <port> */
+ * Usage: test_url_fetch <port> [<https port> <test CA pem>]
+ *        test_url_fetch online   (certificate checks on real sites) */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,6 +24,10 @@
 #include <time.h>
 #include <sys/stat.h>
 
+#include <net/net_http.h>
+#include <net/net_socket_ssl.h>
+#include <retro_timers.h>
+
 #include "../../network/url_fetch.h"
 #include "../../network/url_archive_org.h"
 #include "../../network/url_logins.h"
@@ -30,6 +35,8 @@
 static int g_checks   = 0;
 static int g_failures = 0;
 static int g_port     = 0;
+static int g_sport    = 0;      /* https port, 0 = no https tests */
+static const char *g_ca = NULL; /* the test CA that signed localhost */
 static char g_root[256];
 static char g_logins[300];
 
@@ -138,6 +145,41 @@ static enum url_fetch_result fetch(const char *path, const char *cache,
          ch, ch_len, err, sizeof(err), NULL, NULL);
 }
 
+/* GETs path + "?n=<counter>" (a new URL each time, so the cache never
+ * answers) and copies the body into buf. False on any failure. */
+static int get_text(const char *path, char *buf, size_t len)
+{
+   static int n = 0;
+   char u[256];
+   char cache[512];
+   char out[1024];
+   FILE *f;
+   size_t got;
+
+   snprintf(u, sizeof(u), "%s?n=%d", path, ++n);
+   snprintf(cache, sizeof(cache), "%s/text", g_root);
+   if (fetch(u, cache, NULL, NULL, out, sizeof(out), NULL, 0)
+         != URL_FETCH_OK)
+      return 0;
+   if (!(f = fopen(out, "rb")))
+      return 0;
+   got = fread(buf, 1, len - 1, f);
+   fclose(f);
+   buf[got] = '\0';
+   remove(out);
+   return 1;
+}
+
+/* Authorization schemes serve.py saw on /basic/ and /digest/ since the
+ * last call, e.g. "none,Basic"; "empty" if none. */
+static const char *auth_log(void)
+{
+   static char buf[256];
+   if (!get_text("/authlog", buf, sizeof(buf)))
+      snprintf(buf, sizeof(buf), "(error)");
+   return buf;
+}
+
 static size_t g_prog_calls = 0;
 static size_t g_prog_last  = 0;
 
@@ -232,20 +274,26 @@ static void test_basic(void)
    char cache[300], out[512], ch[256];
    enum url_fetch_result r;
    new_cache(cache, sizeof(cache), "basic");
+   auth_log();
    r = fetch("/basic/game.sfc", cache, NULL, NULL, out, sizeof(out),
          ch, sizeof(ch));
    EXPECT(r == URL_FETCH_NEED_LOGIN);
    EXPECT(strstr(ch, "Basic") != NULL);
    EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+   EXPECT_STR(auth_log(), "none");
 
+   /* Plain http: the login waits for the server's 401, then answers
+    * it once. */
    r = fetch("/basic/game.sfc", cache, "bob", "nope", out, sizeof(out),
          ch, sizeof(ch));
    EXPECT(r == URL_FETCH_NEED_LOGIN);
+   EXPECT_STR(auth_log(), "none,Basic");
 
    r = fetch("/basic/game.sfc", cache, "bob", "pw", out, sizeof(out),
          ch, sizeof(ch));
    EXPECT(r == URL_FETCH_OK);
    EXPECT(file_is_game(out));
+   EXPECT_STR(auth_log(), "none,Basic");
 }
 
 static void test_saved_login(void)
@@ -280,6 +328,27 @@ static void test_digest(void)
          ch, sizeof(ch));
    EXPECT(r == URL_FETCH_OK);
    EXPECT(file_is_game(out));
+}
+
+/* Over plain http a Digest server never sees Basic (the password). */
+static void test_digest_no_basic_first(void)
+{
+   char cache[300], out[512];
+   enum url_fetch_result r;
+   new_cache(cache, sizeof(cache), "digest-first");
+   auth_log();
+   r = fetch("/digest/game.sfc", cache, "bob", "pw", out, sizeof(out),
+         NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT_STR(auth_log(), "none,Digest");
+
+   new_cache(cache, sizeof(cache), "digest-first-saved");
+   EXPECT(url_logins_set("127.0.0.1", "bob", "pw"));
+   r = fetch("/digest/game.sfc", cache, NULL, NULL, out, sizeof(out),
+         NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT_STR(auth_log(), "none,Digest");
+   EXPECT(url_logins_forget_all());
 }
 
 static void test_redirect(void)
@@ -348,9 +417,15 @@ static void test_redirect_auth(void)
    char cache[300], out[512];
    enum url_fetch_result r;
 
-   /* Same host: the echo sees the login. */
+   /* Plain http, no 401: the login is never sent. */
    new_cache(cache, sizeof(cache), "echo");
    r = fetch("/echoauth", cache, "bob", "pw", out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_text(out, "none"));
+
+   /* Same host asking for it: the echo sees the login. */
+   new_cache(cache, sizeof(cache), "basicecho");
+   r = fetch("/basicecho", cache, "bob", "pw", out, sizeof(out), NULL, 0);
    EXPECT(r == URL_FETCH_OK);
    EXPECT(file_is_text(out, "auth:Basic Ym9iOnB3"));
 
@@ -423,6 +498,277 @@ static void test_huge(void)
    EXPECT(count_files(cache, NULL, 0, NULL) == 0);
 }
 
+/* archive.org keys never go over plain http. */
+static void test_archive_keys_http(void)
+{
+   char cache[300], out[512];
+   enum url_fetch_result r;
+   url_fetch_set_test_archive_host("127.0.0.1");
+   EXPECT(url_logins_set_archive_keys("ACCESSKEY", "SECRETKEY"));
+   new_cache(cache, sizeof(cache), "archive-http");
+   r = fetch("/echoauth", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_text(out, "none"));
+   url_fetch_set_test_archive_host(NULL);
+   EXPECT(url_logins_forget_all());
+}
+
+static int is_dir(const char *path)
+{
+   struct stat st;
+   return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static void touch(const char *path)
+{
+   FILE *f = fopen(path, "wb");
+   if (f)
+   {
+      fputs("x", f);
+      fclose(f);
+   }
+}
+
+static void test_clear_cache(void)
+{
+   char cache[300], out[512], p[1024], keep_dir[700], keep_file[700];
+   char other[300];
+   unsigned removed = 99;
+   enum url_fetch_result r;
+
+   new_cache(cache, sizeof(cache), "url_cache");
+   r = fetch("/game.sfc", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   r = fetch("/nodisp?id=1", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   snprintf(p, sizeof(p), "%s/0123456789abcdef_old.bin.part", cache);
+   touch(p);
+   /* Not url_fetch's: kept. */
+   snprintf(keep_file, sizeof(keep_file), "%s/notes.txt", cache);
+   touch(keep_file);
+   snprintf(keep_dir, sizeof(keep_dir), "%s/0123456789abcdef_dir", cache);
+   mkdir(keep_dir, 0700);
+   snprintf(p, sizeof(p), "%s/inner.bin", keep_dir);
+   touch(p);
+
+   EXPECT(count_files(cache, NULL, 0, NULL) == 5);
+   EXPECT(url_fetch_clear_cache(cache, &removed));
+   EXPECT(removed == 3);
+   EXPECT(count_files(cache, NULL, 0, NULL) == 2);
+   EXPECT(file_size(keep_file) == 1);
+   EXPECT(is_dir(keep_dir) && file_size(p) == 1);
+
+   /* The link downloads again afterwards. */
+   r = fetch("/game.sfc", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+
+   /* Trailing slash is fine; a folder not named url_cache is refused
+    * and left alone; a missing url_cache is already clear. */
+   snprintf(p, sizeof(p), "%s/", cache);
+   EXPECT(url_fetch_clear_cache(p, &removed));
+   EXPECT(removed == 1);
+   new_cache(other, sizeof(other), "ok");
+   EXPECT(count_files(other, NULL, 0, NULL) == 1);
+   EXPECT(!url_fetch_clear_cache(other, &removed));
+   EXPECT(count_files(other, NULL, 0, NULL) == 1);
+   EXPECT(!url_fetch_clear_cache("", NULL));
+   EXPECT(!url_fetch_clear_cache(NULL, NULL));
+   snprintf(p, sizeof(p), "%s/nothing/url_cache", g_root);
+   EXPECT(url_fetch_clear_cache(p, NULL));
+}
+
+/* ---------- https (needs the port and test CA from the Makefile) ---------- */
+
+static enum url_fetch_result fetch_s(const char *host, const char *path,
+      const char *cache, const char *user, const char *pass,
+      char *out, size_t out_len, char *err, size_t err_len)
+{
+   char u[256];
+   snprintf(u, sizeof(u), "https://%s:%d%s", host, g_sport, path);
+   return url_fetch_to_cache(u, cache, user, pass, out, out_len,
+         NULL, 0, err, err_len, NULL, NULL);
+}
+
+static void test_https(void)
+{
+   char cache[300], out[512], err[256];
+   char a[64], s[64], u[256];
+   enum url_fetch_result r;
+   const char *bad = "This site's security certificate is not valid, so the login was not sent.";
+   const char *noca = "Can't check this site's security certificate, so the login was not sent.";
+
+   /* System CAs (the test CA is not one of them): anonymous downloads
+    * work as in upstream RetroArch (no check), a login is refused
+    * before the server sees anything. */
+   ssl_socket_set_ca_bundle_override(NULL);
+   new_cache(cache, sizeof(cache), "https-anon");
+   r = fetch_s("localhost", "/game.sfc", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_game(out));
+
+   auth_log();
+   new_cache(cache, sizeof(cache), "https-untrusted");
+   r = fetch_s("localhost", "/basic/game.sfc", cache, "bob", "pw",
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_FAILED);
+   EXPECT_STR(err, bad);
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+   EXPECT_STR(auth_log(), "empty");
+
+   /* Saved login: same. */
+   EXPECT(url_logins_set("localhost", "bob", "pw"));
+   r = fetch_s("localhost", "/basic/game.sfc", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_FAILED);
+   EXPECT_STR(err, bad);
+   EXPECT_STR(auth_log(), "empty");
+   EXPECT(url_logins_forget_all());
+
+   /* No CA certificates at all: a clear refusal; anonymous still ok. */
+   ssl_socket_set_ca_bundle_override("/nonexistent/ca.pem");
+   new_cache(cache, sizeof(cache), "https-noca");
+   r = fetch_s("localhost", "/basic/game.sfc", cache, "bob", "pw",
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_FAILED);
+   EXPECT_STR(err, noca);
+   EXPECT_STR(auth_log(), "empty");
+   r = fetch_s("localhost", "/game.sfc", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_OK);
+
+   /* Trusting the test CA: the login goes through (Basic right away
+    * over https), but only for the name on the certificate. */
+   ssl_socket_set_ca_bundle_override(g_ca);
+   new_cache(cache, sizeof(cache), "https-trusted");
+   r = fetch_s("localhost", "/basic/game.sfc", cache, "bob", "pw",
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_game(out));
+   EXPECT_STR(auth_log(), "Basic");
+
+   new_cache(cache, sizeof(cache), "https-wrongname");
+   r = fetch_s("127.0.0.1", "/basic/game.sfc", cache, "bob", "pw",
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_FAILED);
+   EXPECT_STR(err, bad);
+   EXPECT_STR(auth_log(), "empty");
+
+   /* Digest over https: Basic first, then the Digest answer. */
+   new_cache(cache, sizeof(cache), "https-digest");
+   r = fetch_s("localhost", "/digest/game.sfc", cache, "bob", "pw",
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT_STR(auth_log(), "Basic,Digest");
+
+   /* archive.org keys: sent over (verified) https. */
+   url_fetch_set_test_archive_host("localhost");
+   EXPECT(url_logins_set_archive_keys("ACCESSKEY", "SECRETKEY"));
+   new_cache(cache, sizeof(cache), "https-low");
+   r = fetch_s("localhost", "/echoauth", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_text(out, "auth:LOW ACCESSKEY:SECRETKEY"));
+   /* ... and not to a server whose certificate fails. */
+   ssl_socket_set_ca_bundle_override(NULL);
+   new_cache(cache, sizeof(cache), "https-low-bad");
+   r = fetch_s("localhost", "/echoauth", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_FAILED);
+   EXPECT_STR(err, bad);
+   url_fetch_set_test_archive_host(NULL);
+   EXPECT(url_logins_forget_all());
+
+   /* archive.org sign-in over https: the password is only POSTed to a
+    * server with a valid certificate. */
+   {
+      int before = -1;
+      char cnt[32];
+      if (get_text("/xauthn/count", cnt, sizeof(cnt)))
+         before = atoi(cnt);
+      snprintf(u, sizeof(u), "https://localhost:%d/xauthn/?op=login",
+            g_sport);
+      url_archive_org_set_test_url(u);
+      EXPECT(!url_archive_org_login("bob+ia@example.com", "p&ss w=rd",
+            a, sizeof(a), s, sizeof(s), err, sizeof(err)));
+      EXPECT_STR(err, "archive.org's security certificate is not valid, so the password was not sent");
+      EXPECT(get_text("/xauthn/count", cnt, sizeof(cnt))
+            && atoi(cnt) == before);
+
+      ssl_socket_set_ca_bundle_override(g_ca);
+      EXPECT(url_archive_org_login("bob+ia@example.com", "p&ss w=rd",
+            a, sizeof(a), s, sizeof(s), err, sizeof(err)));
+      EXPECT_STR(a, "ACCESSKEY");
+      url_archive_org_set_test_url(NULL);
+      url_logins_forget_all();
+   }
+   ssl_socket_set_ca_bundle_override(NULL);
+}
+
+/* ---------- online: real sites, system CAs ---------- */
+
+/* GET with verify_tls; returns the status (-1 on failure) and the
+ * TLS error. */
+static int online_get(const char *u, int *tls_error)
+{
+   struct http_connection_t *conn;
+   struct http_t *http;
+   int status;
+   int spins = 0;
+
+   *tls_error = -1;
+   if (!(conn = net_http_connection_new(u, "GET", NULL)))
+      return -1;
+   if (!net_http_connection_iterate(conn) || !net_http_connection_done(conn))
+   {
+      net_http_connection_free(conn);
+      return -1;
+   }
+   net_http_connection_set_user_agent(conn, "RetroArch");
+   net_http_connection_set_follow_redirects(conn, false);
+   net_http_connection_set_verify_tls(conn, true);
+   http = net_http_new(conn);
+   net_http_connection_free(conn);
+   if (!http)
+      return -1;
+   while (!net_http_update(http, NULL, NULL) && spins++ < 30000)
+      retro_sleep(1);
+   status     = net_http_error(http) ? -1 : net_http_status(http);
+   *tls_error = net_http_tls_error(http);
+   net_http_delete(http);
+   return status;
+}
+
+static int run_online(void)
+{
+   int tls, status;
+
+   status = online_get("https://archive.org/robots.txt", &tls);
+   printf("archive.org: status %d, tls_error %d\n", status, tls);
+   EXPECT(tls == NET_HTTP_TLS_OK);
+   EXPECT(status >= 200 && status < 400);
+
+   status = online_get("https://self-signed.badssl.com/", &tls);
+   printf("self-signed.badssl.com: status %d, tls_error %d\n", status, tls);
+   EXPECT(tls == NET_HTTP_TLS_BAD_CERT);
+
+   status = online_get("https://wrong.host.badssl.com/", &tls);
+   printf("wrong.host.badssl.com: status %d, tls_error %d\n", status, tls);
+   EXPECT(tls == NET_HTTP_TLS_BAD_CERT);
+
+   status = online_get("https://expired.badssl.com/", &tls);
+   printf("expired.badssl.com: status %d, tls_error %d\n", status, tls);
+   EXPECT(tls == NET_HTTP_TLS_BAD_CERT);
+
+   if (g_failures)
+   {
+      printf("tls online: %d of %d checks FAILED\n", g_failures, g_checks);
+      return 1;
+   }
+   printf("tls online: all %d checks passed\n", g_checks);
+   return 0;
+}
+
 static void rm_tree(const char *dir)
 {
    char cmd[600];
@@ -479,6 +825,14 @@ static void test_archive_login(void)
          access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
    EXPECT_STR(err, "no account with that email");
 
+   /* An error status with archive.org's JSON reason: the reason wins. */
+   EXPECT(!url_archive_org_login("bob401@example.com", "nope",
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT_STR(err, "wrong email or password");
+   EXPECT(!url_archive_org_login("html401@example.com", "nope",
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT_STR(err, "server answered 401");
+
    /* A web page instead of JSON. */
    EXPECT(!url_archive_org_login("page@example.com", "x",
          access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
@@ -526,10 +880,18 @@ static void test_archive_login(void)
 int main(int argc, char **argv)
 {
    char tmpl[] = "/tmp/url_fetch_test.XXXXXX";
+   if (argc >= 2 && !strcmp(argv[1], "online"))
+      return run_online();
    if (argc < 2 || (g_port = atoi(argv[1])) <= 0)
    {
-      printf("usage: %s <port>\n", argv[0]);
+      printf("usage: %s <port> [<https port> <ca.pem>] | online\n",
+            argv[0]);
       return 2;
+   }
+   if (argc >= 4)
+   {
+      g_sport = atoi(argv[2]);
+      g_ca    = argv[3];
    }
    if (!mkdtemp(tmpl))
    {
@@ -548,6 +910,7 @@ int main(int argc, char **argv)
    test_basic();
    test_saved_login();
    test_digest();
+   test_digest_no_basic_first();
    test_redirect();
    test_drop();
    test_missing();
@@ -557,6 +920,12 @@ int main(int argc, char **argv)
    test_empty();
    test_huge();
    test_archive_login();
+   test_archive_keys_http();
+   test_clear_cache();
+   if (g_sport > 0)
+      test_https();
+   else
+      printf("SKIP: https tests (no https port given)\n");
 
    rm_tree(g_root);
 

@@ -21,6 +21,7 @@
 #ifdef HAVE_NETWORKING
 
 #include <stddef.h>
+#include <boolean.h>
 #include <retro_common_api.h>
 
 RETRO_BEGIN_DECLS
@@ -39,15 +40,30 @@ typedef void (*url_fetch_progress_t)(size_t done, size_t total, void *ud);
 
 /* Blocking. Fixes the link, returns CACHED if a cache file for it
  * exists, else downloads it. Auth: user/pass if user is non-empty,
- * else saved logins for the host, else archive.org keys for hosts
- * ending in archive.org. A Basic try answered by a Digest challenge is
- * retried once with Digest. On NEED_LOGIN, challenge holds the
+ * else saved logins for the host, else archive.org keys (https only)
+ * for hosts ending in archive.org. Over https the login goes as Basic
+ * with the first request (retried once with Digest if the server asks
+ * for it); over plain http nothing is sent until the server answers
+ * 401, then its challenge (Digest preferred, else Basic) is answered
+ * once. Any request carrying a login or keys over https needs a
+ * certificate that verifies against the system CAs; otherwise it is
+ * not sent and FAILED explains why. On NEED_LOGIN, challenge holds the
  * WWW-Authenticate value (may be empty). cb, out buffers and err may
  * be NULL / zero length. cache_dir is created if missing. */
 enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
       const char *user_or_null, const char *pass_or_null,
       char *out_path, size_t out_len, char *challenge, size_t ch_len,
       char *err, size_t err_len, url_fetch_progress_t cb, void *ud);
+
+/* Deletes the downloaded files in cache_dir: plain files named
+ * <16 hex>_..., nothing else (no sub-folders, no other files). Refuses
+ * (false) unless the folder is named url_cache. A missing folder is
+ * already clear (true). removed (may be NULL) gets the count. */
+bool url_fetch_clear_cache(const char *cache_dir, unsigned *removed);
+
+/* Test hook: treat only this host as archive.org (for the keys).
+ * NULL restores the real archive.org check. */
+void url_fetch_set_test_archive_host(const char *host);
 
 RETRO_END_DECLS
 

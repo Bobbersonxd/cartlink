@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include <compat/strl.h>
+#include <string/stdstring.h>
 #include <retro_timers.h>
 #include <features/features_cpu.h>
 #include <net/net_http.h>
@@ -39,13 +40,6 @@
 
 static char ua_test_url[1024] = {0};
 
-static void ua_wipe(void *p, size_t len)
-{
-   volatile unsigned char *b = (volatile unsigned char*)p;
-   while (len--)
-      *b++ = 0;
-}
-
 static void ua_set_err(char *err, size_t elen, const char *msg)
 {
    if (err && elen)
@@ -60,20 +54,24 @@ void url_archive_org_set_test_url(const char *url)
       ua_test_url[0] = '\0';
 }
 
-/* POSTs form to url. On a 200 reply, *data / *len hold the body
- * (caller frees). Returns false with err set otherwise. */
+/* POSTs form to url (https: only with a verified certificate). On a
+ * reply, *status is its HTTP status and *data / *len hold the body
+ * whatever the status (caller frees; NULL if empty). Returns false
+ * with err set if there is no usable reply. */
 static bool ua_post(const char *url, const char *form, size_t form_len,
-      uint8_t **data, size_t *len, char *err, size_t elen)
+      int *status_out, uint8_t **data, size_t *len, char *err, size_t elen)
 {
    struct http_connection_t *conn;
    struct http_t *http;
    retro_time_t last_change;
    size_t last_done = (size_t)-1;
    bool stalled     = false;
+   int tls_error;
    int status;
 
-   *data = NULL;
-   *len  = 0;
+   *data       = NULL;
+   *len        = 0;
+   *status_out = -1;
 
    if (!(conn = net_http_connection_new(url, "POST", NULL)))
    {
@@ -93,6 +91,8 @@ static bool ua_post(const char *url, const char *form, size_t form_len,
    /* Never re-send the password to wherever a redirect points. */
    net_http_connection_set_follow_redirects(conn, false);
    net_http_connection_set_max_body(conn, UA_MAX_BODY);
+   /* The password only goes to a server whose certificate checks out. */
+   net_http_connection_set_verify_tls(conn, true);
 
    http = net_http_new(conn);
    /* net_http wipes its copies of the body when it frees them. */
@@ -125,25 +125,33 @@ static bool ua_post(const char *url, const char *form, size_t form_len,
          retro_sleep(1);
    }
 
-   status = net_http_status(http);
-   if (!stalled && !net_http_error(http) && status == 200)
+   status    = net_http_status(http);
+   tls_error = net_http_tls_error(http);
+   /* net_http_error is also true for any non-2xx status; a transport
+    * error leaves the status at -1. */
+   if (!stalled && status > 0)
       *data = net_http_data(http, len, true);
    net_http_delete(http);
 
-   if (*data)
-      return true;
-
-   if (stalled || status < 0)
-      ua_set_err(err, elen, "could not reach archive.org");
-   else if (status != 200)
+   if (tls_error)
    {
-      char msg[64];
-      snprintf(msg, sizeof(msg), "server answered %d", status);
-      ua_set_err(err, elen, msg);
+      ua_set_err(err, elen, tls_error == NET_HTTP_TLS_NO_CA
+            ? "can't check archive.org's security certificate, so the password was not sent"
+            : "archive.org's security certificate is not valid, so the password was not sent");
+      return false;
    }
-   else
-      ua_set_err(err, elen, "empty reply");
-   return false;
+   if (stalled || status < 0)
+   {
+      ua_set_err(err, elen, "could not reach archive.org");
+      return false;
+   }
+   *status_out = status;
+   if (*data && !*len)
+   {
+      free(*data);
+      *data = NULL;
+   }
+   return true;
 }
 
 bool url_archive_org_login(const char *email, const char *password,
@@ -155,6 +163,7 @@ bool url_archive_org_login(const char *email, const char *password,
    char form[UA_FORM_LEN * 3];
    uint8_t *data = NULL;
    size_t len    = 0;
+   int status    = -1;
    int form_len;
    bool ok       = false;
 
@@ -190,17 +199,45 @@ bool url_archive_org_login(const char *email, const char *password,
    }
 
    if (!ua_post(*ua_test_url ? ua_test_url : UA_LOGIN_URL,
-            form, (size_t)form_len, &data, &len, err, elen))
+            form, (size_t)form_len, &status, &data, &len, err, elen))
       goto end;
 
+   /* archive.org answers a wrong password with an error status and a
+    * JSON reason: read the reply whatever the status. */
+   if (!data)
+   {
+      char msg[64];
+      if (status == 200)
+         strlcpy(msg, "empty reply", sizeof(msg));
+      else
+         snprintf(msg, sizeof(msg), "server answered %d", status);
+      ua_set_err(err, elen, msg);
+      goto end;
+   }
    if (!url_content_parse_archive_login((const char*)data, len,
             access, alen, secret, slen, err, elen))
+   {
+      /* A reply that is not the login JSON: the status says more. */
+      if (     status != 200 && err && elen
+            && string_is_equal(err, "unexpected reply"))
+         snprintf(err, elen, "server answered %d", status);
       goto end;
+   }
+   if (status != 200)
+   {
+      char msg[64];
+      /* Keys in an error reply are not trusted. */
+      url_content_wipe(access, alen);
+      url_content_wipe(secret, slen);
+      snprintf(msg, sizeof(msg), "server answered %d", status);
+      ua_set_err(err, elen, msg);
+      goto end;
+   }
 
    if (!url_logins_set_archive_keys(access, secret))
    {
-      ua_wipe(access, alen);
-      ua_wipe(secret, slen);
+      url_content_wipe(access, alen);
+      url_content_wipe(secret, slen);
       ua_set_err(err, elen, "could not save the keys");
       goto end;
    }
@@ -209,11 +246,11 @@ bool url_archive_org_login(const char *email, const char *password,
 end:
    if (data)
    {
-      ua_wipe(data, len);
+      url_content_wipe(data, len);
       free(data);
    }
-   ua_wipe(pass_enc, sizeof(pass_enc));
-   ua_wipe(form, sizeof(form));
+   url_content_wipe(pass_enc, sizeof(pass_enc));
+   url_content_wipe(form, sizeof(form));
    return ok;
 }
 

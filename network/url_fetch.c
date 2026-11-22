@@ -43,7 +43,8 @@
 enum uf_auth
 {
    UF_AUTH_NONE = 0,
-   UF_AUTH_BASIC,
+   UF_AUTH_BASIC,       /* https: Basic sent with the first request */
+   UF_AUTH_ON_CHALLENGE,/* http: login held back until a 401 asks */
    UF_AUTH_LOW
 };
 
@@ -54,9 +55,27 @@ struct uf_response
    size_t total;               /* Content-Length seen by net_http, 0 if unknown */
    struct string_list *headers;
    int status;
+   int tls_error;             /* enum net_http_tls_error */
    bool err;
    bool too_big;              /* over UF_MAX_BODY or out of memory */
 };
+
+static char uf_test_archive_host[256] = {0};
+
+void url_fetch_set_test_archive_host(const char *host)
+{
+   if (host)
+      strlcpy(uf_test_archive_host, host, sizeof(uf_test_archive_host));
+   else
+      uf_test_archive_host[0] = '\0';
+}
+
+static bool uf_host_is_archive(const char *host)
+{
+   if (uf_test_archive_host[0])
+      return string_is_equal(host, uf_test_archive_host);
+   return url_content_host_is_archive(host);
+}
 
 static void uf_set_err(char *err, size_t err_len, const char *msg)
 {
@@ -221,10 +240,14 @@ static bool uf_resolve_location(char *out, size_t len, const char *base,
 }
 
 /* Blocking GET. Fills r; returns false only if no request could be
- * made at all (bad URL / out of memory). */
+ * made at all (bad URL / out of memory). Requests that carry a login
+ * or keys (non-empty headers) over https need a verified certificate:
+ * without one nothing is sent and r->tls_error says why. */
 static bool uf_get(const char *url, const char *headers_or_null,
       struct uf_response *r, url_fetch_progress_t cb, void *ud)
 {
+   bool verify = headers_or_null && *headers_or_null
+      && string_starts_with_case_insensitive(url, "https://");
    struct http_connection_t *conn;
    struct http_t *http;
    retro_time_t last_change;
@@ -246,6 +269,8 @@ static bool uf_get(const char *url, const char *headers_or_null,
    net_http_connection_set_user_agent(conn, "RetroArch");
    net_http_connection_set_follow_redirects(conn, false);
    net_http_connection_set_max_body(conn, UF_MAX_BODY);
+   if (verify)
+      net_http_connection_set_verify_tls(conn, true);
 
    http = net_http_new(conn);
    net_http_connection_free(conn);
@@ -282,7 +307,8 @@ static bool uf_get(const char *url, const char *headers_or_null,
       }
    }
 
-   r->too_big = net_http_too_big(http);
+   r->too_big   = net_http_too_big(http);
+   r->tls_error = net_http_tls_error(http);
    r->status  = net_http_status(http);
    r->err     = r->err || r->status < 0;
    r->data    = net_http_data(http, &r->len, true);
@@ -324,21 +350,26 @@ static void uf_scan_cache(const char *cache_dir, const char *prefix,
 }
 
 /* Picks the Authorization header for one hop. Logins (explicit or
- * saved) go only to the original host; archive keys only to
- * archive.org hosts; nothing once an https hop led to plain http. */
+ * saved) go only to the original host: over https as Basic right
+ * away, over plain http only once the server's 401 asks (and then as
+ * Digest if it offers it). archive keys go only to archive.org hosts
+ * over https. Nothing once an https hop led to plain http. */
 static enum uf_auth uf_pick_auth(char *auth, size_t auth_len,
-      const char *hop_host, const char *orig_host, bool downgraded,
-      bool have_login, const char *user, const char *pass)
+      const char *hop_url, const char *hop_host, const char *orig_host,
+      bool downgraded, bool have_login, const char *user, const char *pass)
 {
+   bool https = string_starts_with_case_insensitive(hop_url, "https://");
    auth[0] = '\0';
    if (downgraded)
       return UF_AUTH_NONE;
    if (have_login && string_is_equal(hop_host, orig_host))
    {
+      if (!https)
+         return UF_AUTH_ON_CHALLENGE;
       url_content_basic_auth_header(auth, auth_len, user, pass);
       return UF_AUTH_BASIC;
    }
-   if (url_content_host_is_archive(hop_host))
+   if (https && uf_host_is_archive(hop_host))
    {
       char access[256];
       char secret[256];
@@ -349,8 +380,8 @@ static enum uf_auth uf_pick_auth(char *auth, size_t auth_len,
          url_content_archive_auth_header(auth, auth_len, access, secret);
          kind = UF_AUTH_LOW;
       }
-      memset(access, 0, sizeof(access));
-      memset(secret, 0, sizeof(secret));
+      url_content_wipe(access, sizeof(access));
+      url_content_wipe(secret, sizeof(secret));
       return kind;
    }
    return UF_AUTH_NONE;
@@ -448,8 +479,8 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
       const char *loc;
 
       url_content_host(hop_host, sizeof(hop_host), cur);
-      kind = uf_pick_auth(auth, sizeof(auth), hop_host, host, downgraded,
-            have_login, user, pass);
+      kind = uf_pick_auth(auth, sizeof(auth), cur, hop_host, host,
+            downgraded, have_login, user, pass);
 
       uf_response_free(&r);
       if (!uf_get(cur, auth, &r, cb, ud))
@@ -457,13 +488,28 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
          uf_set_err(err, err_len, "Bad URL.");
          goto end;
       }
+      if (r.tls_error)
+         break;
 
-      if (r.status == 401 && kind == UF_AUTH_BASIC)
+      /* Answer the server's challenge with the login: Digest when
+       * offered (the password itself is never sent), else Basic, which
+       * over plain http is only sent once the server asked for it. */
+      if (     r.status == 401
+            && (kind == UF_AUTH_BASIC || kind == UF_AUTH_ON_CHALLENGE))
       {
          const char *digest = uf_challenge(r.headers, "Digest");
+         bool retry         = false;
          uf_request_uri(uri, sizeof(uri), cur);
          if (digest && url_content_digest_auth_header(auth, sizeof(auth),
                   digest, "GET", uri, user, pass))
+            retry = true;
+         else if (kind == UF_AUTH_ON_CHALLENGE
+               && uf_challenge(r.headers, "Basic"))
+         {
+            url_content_basic_auth_header(auth, sizeof(auth), user, pass);
+            retry = true;
+         }
+         if (retry)
          {
             uf_response_free(&r);
             if (!uf_get(cur, auth, &r, cb, ud))
@@ -471,6 +517,8 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
                uf_set_err(err, err_len, "Bad URL.");
                goto end;
             }
+            if (r.tls_error)
+               break;
          }
       }
 
@@ -493,6 +541,14 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
             && !string_starts_with_case_insensitive(next, "https://"))
          downgraded = true;
       strlcpy(cur, next, sizeof(cur));
+   }
+
+   if (r.tls_error)
+   {
+      uf_set_err(err, err_len, r.tls_error == NET_HTTP_TLS_NO_CA
+            ? "Can't check this site's security certificate, so the login was not sent."
+            : "This site's security certificate is not valid, so the login was not sent.");
+      goto end;
    }
 
    if (r.status == 401)
@@ -581,10 +637,69 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
 
 end:
    uf_response_free(&r);
-   memset(user, 0, sizeof(user));
-   memset(pass, 0, sizeof(pass));
-   memset(auth, 0, sizeof(auth));
+   url_content_wipe(user, sizeof(user));
+   url_content_wipe(pass, sizeof(pass));
+   url_content_wipe(auth, sizeof(auth));
    return ret;
+}
+
+/* True for "<16 lower-case hex>_..." (the names url_fetch writes). */
+static bool uf_is_cache_name(const char *name)
+{
+   int i;
+   for (i = 0; i < UF_PREFIX_LEN - 1; i++)
+   {
+      char c = name[i];
+      if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+         return false;
+   }
+   return name[UF_PREFIX_LEN - 1] == '_' && name[UF_PREFIX_LEN] != '\0';
+}
+
+bool url_fetch_clear_cache(const char *cache_dir, unsigned *removed)
+{
+   char dir[PATH_MAX_LENGTH];
+   size_t n;
+   struct RDIR *rd;
+   bool ok = true;
+
+   if (removed)
+      *removed = 0;
+   if (string_is_empty(cache_dir))
+      return false;
+
+   /* Guard: only ever a folder named url_cache. */
+   strlcpy(dir, cache_dir, sizeof(dir));
+   n = strlen(dir);
+   while (n > 1 && (dir[n - 1] == '/' || dir[n - 1] == '\\'))
+      dir[--n] = '\0';
+   if (!string_is_equal(path_basename(dir), "url_cache"))
+      return false;
+   if (!path_is_directory(dir))
+      return true; /* nothing downloaded yet */
+
+   if (!(rd = retro_opendir_include_hidden(dir, true)))
+      return false;
+   while (retro_readdir(rd))
+   {
+      char path[PATH_MAX_LENGTH];
+      const char *name = retro_dirent_get_name(rd);
+      /* Files only, no sub-folders, and only names url_fetch made. */
+      if (     !name
+            || retro_dirent_is_dir(rd, NULL)
+            || !uf_is_cache_name(name))
+         continue;
+      fill_pathname_join_special(path, dir, name, sizeof(path));
+      if (filestream_delete(path) == 0)
+      {
+         if (removed)
+            (*removed)++;
+      }
+      else
+         ok = false;
+   }
+   retro_closedir(rd);
+   return ok;
 }
 
 #endif /* HAVE_NETWORKING */

@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 # Local test server for test_url_fetch.c. Silent, loopback only:
 # listens on 127.0.0.1 and 127.0.0.2 (a "different host" for the
-# cross-host redirect test). Usage: serve.py <port>
+# cross-host redirect test). With a second port and a certificate, the
+# same routes are also served over https on 127.0.0.1.
+# Usage: serve.py <port> [<https port> <cert.pem> <key.pem>]
 
 import hashlib
 import http.server
 import socketserver
+import ssl
 import sys
 import threading
+import time
 
 GAME = bytes((i * 7 + 3) & 0xFF for i in range(8192))
 PAGE = b"<!DOCTYPE html>\n<html><body>Sign in</body></html>\n"
@@ -18,6 +22,8 @@ NONCE = "dcd98b7102dd2f0e8b11d0f600bfb0c093"
 BIG = 300 * 1024 * 1024
 HUGE = 3 * 1024 * 1024 * 1024
 LOGIN_POSTS = 0   # POSTs that reached /xauthn/?op=login
+AUTH_LOG = []     # Authorization scheme of each /basic/ and /digest/ GET
+SLOW = 64 * 1024 * 1024
 
 
 def md5(s):
@@ -130,19 +136,49 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif email == "page@example.com":
             self.send_body(200, PAGE, "text/html")
             return
+        elif email == "bob401@example.com":
+            # archive.org's way: an error status with a JSON reason.
+            self.send_body(401, json.dumps({
+                "success": False,
+                "values": {"reason": "account_bad_password"},
+                "version": 1}).encode(), "application/json")
+            return
+        elif email == "html401@example.com":
+            self.send_body(401, PAGE, "text/html")
+            return
         else:
             reply = {"success": False,
                      "values": {"reason": "account_not_found"},
                      "version": 1}
         self.send_body(200, json.dumps(reply).encode(), "application/json")
 
+    def log_auth(self):
+        auth = self.headers.get("Authorization")
+        AUTH_LOG.append(auth.split(" ", 1)[0] if auth else "none")
+
     def do_GET(self):
+        global AUTH_LOG
         path = self.path
         port = self.server.server_address[1]
         if path.startswith("/xauthn/count"):
             self.send_body(200, ("%d" % LOGIN_POSTS).encode(), "text/plain")
             return
-        if path == "/echoauth":
+        if path.startswith("/authlog"):
+            body = (",".join(AUTH_LOG) or "empty").encode()
+            AUTH_LOG = []
+            self.send_body(200, body, "text/plain")
+            return
+        if path.startswith("/basic/") or path.startswith("/digest/"):
+            self.log_auth()
+        if path == "/basicecho":
+            # Asks for Basic, then echoes what it got.
+            auth = self.headers.get("Authorization")
+            if auth:
+                self.send_body(200, ("auth:" + auth).encode(), "text/plain")
+            else:
+                self.send_body(401, b"", "text/plain", [
+                    ("WWW-Authenticate", 'Basic realm="' + REALM + '"')])
+        elif path == "/echoauth":
             auth = self.headers.get("Authorization")
             body = ("auth:" + auth).encode() if auth else b"none"
             self.send_body(200, body, "text/plain")
@@ -204,6 +240,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(GAME[:1000])
             self.wfile.flush()
             self.close_connection = True
+        elif path == "/slow":
+            # 64 MiB at about 640 KiB/s: still running when a test quits.
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(SLOW))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            chunk = bytes(64 * 1024)
+            left = SLOW
+            try:
+                while left > 0:
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+                    left -= len(chunk)
+                    time.sleep(0.1)
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
         elif path == "/big":
             self.send_response(200)
             self.send_header("Content-Type", "application/octet-stream")
@@ -235,6 +288,12 @@ def main():
     port = int(sys.argv[1])
     other = Server(("127.0.0.2", port), Handler)
     threading.Thread(target=other.serve_forever, daemon=True).start()
+    if len(sys.argv) >= 5:
+        tls = Server(("127.0.0.1", int(sys.argv[2])), Handler)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(sys.argv[3], sys.argv[4])
+        tls.socket = ctx.wrap_socket(tls.socket, server_side=True)
+        threading.Thread(target=tls.serve_forever, daemon=True).start()
     Server(("127.0.0.1", port), Handler).serve_forever()
 
 
