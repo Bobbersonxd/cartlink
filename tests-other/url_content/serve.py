@@ -96,6 +96,43 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Connection", "close")
         self.end_headers()
 
+    # Fake archive.org xauthn: POST /xauthn/?op=login with a form body.
+    def do_POST(self):
+        import json
+        import urllib.parse
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        body = self.rfile.read(n).decode("utf-8", "replace")
+        if self.path == "/xauthn/redirect?op=login":
+            self.redirect("/xauthn/?op=login")
+            return
+        if self.path != "/xauthn/?op=login":
+            self.send_body(404, b"not found", "text/plain")
+            return
+        if self.headers.get("Content-Type") != \
+                "application/x-www-form-urlencoded":
+            self.send_body(400, b"bad content type", "text/plain")
+            return
+        form = urllib.parse.parse_qs(body, keep_blank_values=True)
+        email = form.get("email", [""])[0]
+        password = form.get("password", [""])[0]
+        if email == "bob+ia@example.com" and password == "p&ss w=rd":
+            reply = {"success": True, "values": {
+                "email": email, "screenname": "bob",
+                "s3": {"access": "ACCESSKEY", "secret": "SECRETKEY"}},
+                "version": 1}
+        elif email == "bob+ia@example.com":
+            reply = {"success": False,
+                     "values": {"reason": "account_bad_password"},
+                     "version": 1}
+        elif email == "page@example.com":
+            self.send_body(200, PAGE, "text/html")
+            return
+        else:
+            reply = {"success": False,
+                     "values": {"reason": "account_not_found"},
+                     "version": 1}
+        self.send_body(200, json.dumps(reply).encode(), "application/json")
+
     def do_GET(self):
         path = self.path
         port = self.server.server_address[1]

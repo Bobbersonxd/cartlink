@@ -366,6 +366,19 @@ void net_http_urlencode_full(char *s, const char *source, size_t len)
    free(tmp);
 }
 
+/* Request bodies may hold passwords (sign-in forms): clear them before
+ * the memory goes back to the allocator. */
+static void net_http_free_body(void *body, size_t len)
+{
+   volatile unsigned char *p = (volatile unsigned char*)body;
+   size_t i;
+   if (!body)
+      return;
+   for (i = 0; i < len; i++)
+      p[i] = 0;
+   free(body);
+}
+
 struct http_connection_t *net_http_connection_new(const char *url,
       const char *method, const char *data)
 {
@@ -415,7 +428,7 @@ struct http_connection_t *net_http_connection_new(const char *url,
    if (conn->method)
       free(conn->method);
    if (conn->postdata)
-      free(conn->postdata);
+      net_http_free_body(conn->postdata, conn->contentlength);
    free(conn);
    return NULL;
 }
@@ -521,7 +534,7 @@ void net_http_connection_free(struct http_connection_t *conn)
       free(conn->contenttype);
 
    if (conn->postdata)
-      free(conn->postdata);
+      net_http_free_body(conn->postdata, conn->contentlength);
 
    if (conn->useragent)
       free(conn->useragent);
@@ -572,7 +585,8 @@ void net_http_connection_set_content(
    if (conn->contenttype)
       free(conn->contenttype);
    if (conn->postdata)
-      free(conn->postdata);
+      net_http_free_body(conn->postdata, conn->contentlength);
+   conn->postdata      = NULL;
 
    conn->contenttype   = content_type ? strdup(content_type) : NULL;
    conn->contentlength = content_length;
@@ -1705,7 +1719,8 @@ void net_http_delete(struct http_t *state)
    if (state->request.contenttype)
       free(state->request.contenttype);
    if (state->request.postdata)
-      free(state->request.postdata);
+      net_http_free_body(state->request.postdata,
+            state->request.contentlength);
    if (state->request.useragent)
       free(state->request.useragent);
    if (state->request.headers)

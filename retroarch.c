@@ -160,6 +160,7 @@
 #ifdef HAVE_NETWORKING
 #include "network/netplay/netplay.h"
 #include "network/netplay/netplay_private.h"
+#include "network/url_content.h"
 #ifdef HAVE_WIFI
 #include "network/wifi_driver.h"
 #endif
@@ -7671,13 +7672,37 @@ static bool retroarch_parse_input_and_config(
    if (optind < argc)
    {
       bool subsystem_path_is_empty = path_is_empty(RARCH_PATH_SUBSYSTEM);
+      const char *content_path     = (const char*)argv[optind];
+#ifdef HAVE_NETWORKING
+      char url_cached_path[PATH_MAX_LENGTH];
+
+      /* "Load from URL": a downloadable http(s) link is fetched into
+       * the URL cache now (blocking) and the cached file is loaded as
+       * if it had been given. Media links (mp4, m3u8, ...) are left
+       * alone for the media player, as before. */
+      if (     subsystem_path_is_empty
+            && url_content_is_downloadable(content_path))
+      {
+         if (!task_url_content_fetch_cli(content_path,
+                  url_cached_path, sizeof(url_cached_path)))
+         {
+            /* Not retroarch_fail(): its error path calls
+             * task_queue_wait() before the task queue exists and
+             * crashes (upstream, also for --menu + content). Nothing
+             * is set up yet, so a plain exit is clean. */
+            rarch_log_file_deinit();
+            exit(EXIT_FAILURE);
+         }
+         content_path = url_cached_path;
+      }
+#endif
 
       /* We requested explicit ROM, so use PLAIN core type. */
       runloop_set_current_core_type(CORE_TYPE_PLAIN, false);
 
       if (subsystem_path_is_empty)
       {
-         runloop_path_set_basename((const char*)argv[optind]);
+         runloop_path_set_basename(content_path);
          runloop_path_set_names();
          runloop_path_set_redirect(settings, p_rarch->dir_savefile,
                p_rarch->dir_savestate);

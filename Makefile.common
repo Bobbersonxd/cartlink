@@ -2308,6 +2308,7 @@ ifeq ($(HAVE_NETWORKING), 1)
           network/url_content.o \
           network/url_logins.o \
           network/url_fetch.o \
+          network/url_archive_org.o \
           tasks/task_url_content.o
 
    ifeq ($(HAVE_EMSCRIPTEN), 1)

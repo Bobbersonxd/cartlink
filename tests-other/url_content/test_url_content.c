@@ -426,6 +426,131 @@ static void test_logins(void)
    rmdir(dir);
 }
 
+static void test_form_encode(void)
+{
+   char out[64];
+
+   EXPECT(url_content_form_encode(out, sizeof(out), "bob@example.com"));
+   EXPECT_STR(out, "bob%40example.com");
+   EXPECT(url_content_form_encode(out, sizeof(out), "a b&c=d+e/~_.-"));
+   EXPECT_STR(out, "a+b%26c%3Dd%2Be%2F~_.-");
+   EXPECT(url_content_form_encode(out, sizeof(out), "\xc3\xa9"));
+   EXPECT_STR(out, "%C3%A9");
+   EXPECT(url_content_form_encode(out, sizeof(out), ""));
+   EXPECT_STR(out, "");
+   /* Exactly fits: 3 chars + NUL in 4. */
+   EXPECT(url_content_form_encode(out, 4, "abc"));
+   EXPECT_STR(out, "abc");
+   /* Too long: false and an empty result, never a cut value. */
+   EXPECT(!url_content_form_encode(out, 4, "abcd"));
+   EXPECT_STR(out, "");
+   EXPECT(!url_content_form_encode(out, 5, "ab@"));
+   EXPECT_STR(out, "");
+}
+
+static void test_archive_login_parse(void)
+{
+   char access[64];
+   char secret[64];
+   char err[128];
+   const char *ok =
+      "{\"success\": true, \"values\": {\"cookies\": {\"logged-in-sig\": \"x\","
+      " \"logged-in-user\": \"bob%40example.com\"}, \"email\": \"bob@example.com\","
+      " \"itemname\": \"@bob\", \"s3\": {\"access\": \"AKEY123\","
+      " \"secret\": \"SKEY456\"}, \"screenname\": \"bob\"}, \"version\": 1}";
+   /* s3 before success, and noise with arrays and nested objects. */
+   const char *ok_reordered =
+      "{\"values\": {\"list\": [{\"s3\": {\"access\": \"WRONG\"}}, \"s3\"],"
+      " \"s3\": {\"secret\": \"S2\", \"access\": \"A2\"}},"
+      " \"success\": true}";
+   const char *bad_pw =
+      "{\"success\": false, \"values\": {\"reason\": \"account_bad_password\"},"
+      " \"version\": 1}";
+   const char *not_found =
+      "{\"success\": false, \"values\": {\"reason\": \"account_not_found\"},"
+      " \"version\": 1}";
+   const char *other_reason =
+      "{\"success\": false, \"values\": {\"reason\": \"account_locked\"}}";
+   const char *error_only =
+      "{\"success\": false, \"error\": \"Missing email\"}";
+   const char *no_s3 =
+      "{\"success\": true, \"values\": {\"email\": \"bob@example.com\"}}";
+   const char *s3_top_level =
+      "{\"success\": true, \"s3\": {\"access\": \"A\", \"secret\": \"S\"}}";
+   const char *success_string =
+      "{\"success\": \"true\", \"values\": {\"s3\": {\"access\": \"A\","
+      " \"secret\": \"S\"}}}";
+   const char *broken = "{\"success\": true, \"values\": {\"s3\": {\"acc";
+   const char *html   = "<!DOCTYPE html><html></html>";
+
+   EXPECT(url_content_parse_archive_login(ok, strlen(ok),
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT_STR(access, "AKEY123");
+   EXPECT_STR(secret, "SKEY456");
+   EXPECT_STR(err, "");
+
+   EXPECT(url_content_parse_archive_login(ok_reordered, strlen(ok_reordered),
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT_STR(access, "A2");
+   EXPECT_STR(secret, "S2");
+
+   EXPECT(!url_content_parse_archive_login(bad_pw, strlen(bad_pw),
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT_STR(err, "wrong email or password");
+   EXPECT_STR(access, "");
+   EXPECT_STR(secret, "");
+
+   EXPECT(!url_content_parse_archive_login(not_found, strlen(not_found),
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT_STR(err, "no account with that email");
+
+   EXPECT(!url_content_parse_archive_login(other_reason, strlen(other_reason),
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT_STR(err, "account_locked");
+
+   EXPECT(!url_content_parse_archive_login(error_only, strlen(error_only),
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT_STR(err, "Missing email");
+
+   EXPECT(!url_content_parse_archive_login(no_s3, strlen(no_s3),
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT_STR(err, "no keys in the reply");
+
+   EXPECT(!url_content_parse_archive_login(s3_top_level, strlen(s3_top_level),
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT_STR(err, "no keys in the reply");
+
+   EXPECT(!url_content_parse_archive_login(success_string,
+         strlen(success_string),
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT_STR(err, "unexpected reply");
+   EXPECT_STR(access, "");
+
+   EXPECT(!url_content_parse_archive_login(broken, strlen(broken),
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT_STR(err, "unexpected reply");
+   EXPECT_STR(access, "");
+   EXPECT_STR(secret, "");
+
+   EXPECT(!url_content_parse_archive_login(html, strlen(html),
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT_STR(err, "unexpected reply");
+
+   EXPECT(!url_content_parse_archive_login(NULL, 0,
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT_STR(err, "unexpected reply");
+
+   /* Keys that do not fit are refused, never cut. */
+   EXPECT(!url_content_parse_archive_login(ok, strlen(ok),
+         access, 4, secret, sizeof(secret), err, sizeof(err)));
+   EXPECT_STR(access, "");
+   EXPECT_STR(secret, "");
+
+   /* NULL err is fine. */
+   EXPECT(!url_content_parse_archive_login(bad_pw, strlen(bad_pw),
+         access, sizeof(access), secret, sizeof(secret), NULL, 0));
+}
+
 int main(void)
 {
    test_fix_link();
@@ -438,6 +563,8 @@ int main(void)
    test_is_downloadable();
    test_looks_like_html();
    test_logins();
+   test_form_encode();
+   test_archive_login_parse();
 
    if (g_failures)
    {

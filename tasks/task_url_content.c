@@ -46,6 +46,7 @@
 #include "../network/url_content.h"
 #include "../network/url_fetch.h"
 #include "../network/url_logins.h"
+#include "../network/url_archive_org.h"
 #ifdef HAVE_MENU
 #include "../menu/menu_driver.h"
 #include "../menu/menu_input.h"
@@ -264,17 +265,15 @@ static void url_task_pass_cb(void *userdata, const char *line)
    menu_input_dialog_end();
 }
 
-static bool url_task_dialog(enum msg_hash_enums fmt,
+static bool url_task_dialog_label(const char *label,
       input_keyboard_line_complete_t cb)
 {
-   char label[512];
    menu_input_ctx_line_t line;
    struct menu_state *menu_st = menu_state_get_ptr();
 
    if (!(menu_st->flags & MENU_ST_FLAG_ALIVE))
       retroarch_menu_running();
 
-   snprintf(label, sizeof(label), msg_hash_to_str(fmt), url_task_st.host);
    line.label         = label;
    line.label_setting = "no_setting";
    line.type          = 0;
@@ -282,6 +281,17 @@ static bool url_task_dialog(enum msg_hash_enums fmt,
    line.cb            = cb;
    return menu_input_dialog_start(&line);
 }
+
+static bool url_task_dialog(enum msg_hash_enums fmt,
+      input_keyboard_line_complete_t cb)
+{
+   char label[512];
+   snprintf(label, sizeof(label), msg_hash_to_str(fmt), url_task_st.host);
+   return url_task_dialog_label(label, cb);
+}
+
+/* Runs on_done on the next task queue pass (see below). */
+static void url_task_next_pass(retro_task_callback_t on_done);
 
 /* A dialog cannot be opened from inside another dialog's callback:
  * the input code frees the line right after the callback returns.
@@ -297,10 +307,20 @@ static void url_task_open_pass_callback(retro_task_t *task,
    url_task_dialog(MSG_URL_CONTENT_PASSWORD_FOR, url_task_pass_cb);
 }
 
-static void url_task_user_cb(void *userdata, const char *line)
+static void url_task_next_pass(retro_task_callback_t on_done)
 {
    retro_task_t *task;
 
+   if (!(task = task_init()))
+      return;
+   task->handler  = url_task_open_pass_handler;
+   task->callback = on_done;
+   if (!task_queue_push(task))
+      free(task);
+}
+
+static void url_task_user_cb(void *userdata, const char *line)
+{
    if (string_is_empty(line))
    {
       menu_input_dialog_end();
@@ -310,11 +330,7 @@ static void url_task_user_cb(void *userdata, const char *line)
    strlcpy(url_task_st.user, line, sizeof(url_task_st.user));
    menu_input_dialog_end();
 
-   if (!(task = task_init()))
-      return;
-   task->handler  = url_task_open_pass_handler;
-   task->callback = url_task_open_pass_callback;
-   task_queue_push(task);
+   url_task_next_pass(url_task_open_pass_callback);
 }
 #endif
 
@@ -477,6 +493,325 @@ static bool url_task_push(const char *url,
 bool task_push_url_content_load(const char *url)
 {
    return url_task_push(url, NULL, NULL);
+}
+
+/* ---------- command line ---------- */
+
+/* Logs every 10% (sizes known) so a big download shows it is alive. */
+static void url_cli_progress_cb(size_t done, size_t total, void *ud)
+{
+   int *last = (int*)ud;
+   int pct;
+
+   if (!total)
+      return;
+   if (done >= total)
+      pct = 100;
+   else
+      pct = (int)(((double)done * 100.0) / (double)total);
+   pct -= pct % 10;
+   if (pct != *last)
+   {
+      *last = pct;
+      RARCH_LOG("[URL] Downloading: %d%% of %u KiB.\n", pct,
+            (unsigned)(total / 1024));
+   }
+}
+
+/* Errors must reach the user even without --verbose. */
+static void url_cli_error(const char *msg)
+{
+   RARCH_ERR("[URL] %s\n", msg);
+   if (!verbosity_is_enabled() || is_logging_to_file())
+      fprintf(stderr, "%s\n", msg);
+}
+
+bool task_url_content_fetch_cli(const char *url,
+      char *out_path, size_t len)
+{
+   char fixed[URL_TASK_URL_MAX];
+   char host[URL_TASK_HOST_MAX];
+   char cache_dir[PATH_MAX_LENGTH];
+   char err[512];
+   char msg[1024];
+   int last_pct = -1;
+   enum url_fetch_result res;
+
+   if (out_path && len)
+      out_path[0] = '\0';
+   if (string_is_empty(url) || !out_path || !len)
+      return false;
+
+   url_content_fix_link(fixed, sizeof(fixed), url);
+   url_content_host(host, sizeof(host), fixed);
+
+   if (!url_task_cache_dir(cache_dir, sizeof(cache_dir)))
+   {
+      url_cli_error(msg_hash_to_str(MSG_URL_CONTENT_FAILED));
+      return false;
+   }
+
+   /* Only the host is logged: a link may carry a token or a login. */
+   RARCH_LOG("[URL] Fetching from %s into \"%s\".\n", host, cache_dir);
+   err[0] = '\0';
+   res    = url_fetch_to_cache(url, cache_dir, NULL, NULL,
+         out_path, len, NULL, 0, err, sizeof(err),
+         url_cli_progress_cb, &last_pct);
+
+   switch (res)
+   {
+      case URL_FETCH_OK:
+      case URL_FETCH_CACHED:
+         RARCH_LOG("[URL] %s \"%s\".\n",
+               res == URL_FETCH_CACHED ? "Cache hit" : "Downloaded",
+               out_path);
+         return true;
+      case URL_FETCH_NEED_LOGIN:
+         snprintf(msg, sizeof(msg),
+               msg_hash_to_str(MSG_URL_CONTENT_CLI_LOGIN_NEEDED), host);
+         url_cli_error(msg);
+         break;
+      case URL_FETCH_NOT_A_FILE:
+         url_cli_error(msg_hash_to_str(MSG_URL_CONTENT_NOT_A_FILE));
+         break;
+      case URL_FETCH_TOO_BIG:
+      case URL_FETCH_FAILED:
+      default:
+         url_cli_error(string_is_empty(err)
+               ? msg_hash_to_str(MSG_URL_CONTENT_FAILED) : err);
+         break;
+   }
+   out_path[0] = '\0';
+   return false;
+}
+
+/* ---------- archive.org sign-in ---------- */
+
+#ifdef HAVE_MENU
+
+#define URL_ARCHIVE_KEY_MAX 256
+
+typedef struct url_archive_task_data
+{
+#ifdef HAVE_THREADS
+   sthread_t *thread;
+   slock_t *lock;
+#endif
+   bool started;
+   bool done;
+   bool ok;
+   char email[URL_TASK_CRED_MAX];
+   char pass[URL_TASK_CRED_MAX];
+   char access[URL_ARCHIVE_KEY_MAX];
+   char secret[URL_ARCHIVE_KEY_MAX];
+   char err[256];
+} url_archive_task_data_t;
+
+/* Main thread only: one sign-in at a time; email carries the first
+ * dialog's answer to the second. */
+static struct
+{
+   bool busy;
+   char email[URL_TASK_CRED_MAX];
+} url_archive_st;
+
+/* Called on the sign-in thread (or the task thread without threads). */
+static void url_archive_task_run(void *ud)
+{
+   url_archive_task_data_t *d = (url_archive_task_data_t*)ud;
+   bool ok = url_archive_org_login(d->email, d->pass,
+         d->access, sizeof(d->access), d->secret, sizeof(d->secret),
+         d->err, sizeof(d->err));
+
+   /* Not needed any more: the keys are saved, the password never is. */
+   url_task_wipe(d->pass, sizeof(d->pass));
+   url_task_wipe(d->access, sizeof(d->access));
+   url_task_wipe(d->secret, sizeof(d->secret));
+
+#ifdef HAVE_THREADS
+   slock_lock(d->lock);
+#endif
+   d->ok   = ok;
+   d->done = true;
+#ifdef HAVE_THREADS
+   slock_unlock(d->lock);
+#endif
+}
+
+static void url_archive_task_handler(retro_task_t *task)
+{
+   url_archive_task_data_t *d = (url_archive_task_data_t*)task->task_data;
+   char msg[512];
+
+   if (!d->started)
+   {
+      d->started = true;
+#ifdef HAVE_THREADS
+      if (d->lock)
+         d->thread = sthread_create(url_archive_task_run, d);
+      if (d->thread)
+      {
+         task->when = cpu_features_get_time_usec() + URL_TASK_POLL_USEC;
+         return;
+      }
+#endif
+      url_archive_task_run(d);
+   }
+
+#ifdef HAVE_THREADS
+   if (d->thread)
+   {
+      bool done;
+      slock_lock(d->lock);
+      done = d->done;
+      slock_unlock(d->lock);
+      if (!done)
+      {
+         task->when = cpu_features_get_time_usec() + URL_TASK_POLL_USEC;
+         return;
+      }
+      sthread_join(d->thread);
+      d->thread = NULL;
+   }
+#endif
+
+   if (d->ok)
+   {
+      RARCH_LOG("[URL] Signed in to archive.org, keys saved.\n");
+      url_task_finish_msg(task,
+            msg_hash_to_str(MSG_URL_ARCHIVE_SIGNED_IN), false);
+   }
+   else
+   {
+      snprintf(msg, sizeof(msg),
+            msg_hash_to_str(MSG_URL_ARCHIVE_SIGN_IN_FAILED), d->err);
+      RARCH_WARN("[URL] %s\n", msg);
+      url_task_finish_msg(task, msg, true);
+   }
+
+   task->when = 0;
+   task_set_progress(task, 100);
+   task_set_flags(task, RETRO_TASK_FLG_FINISHED, true);
+}
+
+static void url_archive_task_callback(retro_task_t *task,
+      void *task_data, void *user_data, const char *error)
+{
+   url_archive_st.busy = false;
+}
+
+static void url_archive_task_cleanup(retro_task_t *task)
+{
+   url_archive_task_data_t *d = (url_archive_task_data_t*)task->task_data;
+
+   if (!d)
+      return;
+   url_task_wipe(d->pass, sizeof(d->pass));
+   url_task_wipe(d->access, sizeof(d->access));
+   url_task_wipe(d->secret, sizeof(d->secret));
+#ifdef HAVE_THREADS
+   slock_free(d->lock);
+#endif
+   free(d);
+   task->task_data = NULL;
+}
+
+static bool url_archive_task_push(const char *email, const char *pass)
+{
+   url_archive_task_data_t *d;
+   retro_task_t *task;
+
+   if (string_is_empty(email) || string_is_empty(pass))
+      return false;
+   if (url_archive_st.busy)
+   {
+      url_task_notify(msg_hash_to_str(MSG_URL_CONTENT_BUSY),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+      return false;
+   }
+   if (!(d = (url_archive_task_data_t*)calloc(1, sizeof(*d))))
+      return false;
+
+   strlcpy(d->email, email, sizeof(d->email));
+   strlcpy(d->pass, pass, sizeof(d->pass));
+#ifdef HAVE_THREADS
+   d->lock = slock_new();
+#endif
+
+   if (!(task = task_init()))
+   {
+      url_task_wipe(d->pass, sizeof(d->pass));
+#ifdef HAVE_THREADS
+      slock_free(d->lock);
+#endif
+      free(d);
+      return false;
+   }
+
+   task->handler   = url_archive_task_handler;
+   task->callback  = url_archive_task_callback;
+   task->cleanup   = url_archive_task_cleanup;
+   task->task_data = d;
+   task->title     = strdup(msg_hash_to_str(MSG_URL_ARCHIVE_SIGNING_IN));
+   task->progress  = -1;
+
+   url_archive_st.busy = true;
+   if (!task_queue_push(task))
+   {
+      url_archive_st.busy = false;
+      url_archive_task_cleanup(task);
+      free(task->title);
+      free(task);
+      return false;
+   }
+   return true;
+}
+
+static void url_archive_pass_cb(void *userdata, const char *line)
+{
+   if (!string_is_empty(line))
+   {
+      url_archive_task_push(url_archive_st.email, line);
+      /* The dialog's own buffer: clear it before the input code frees
+       * it. */
+      url_task_wipe((char*)line, strlen(line));
+   }
+   url_task_wipe(url_archive_st.email, sizeof(url_archive_st.email));
+   menu_input_dialog_end();
+}
+
+static void url_archive_open_pass_callback(retro_task_t *task,
+      void *task_data, void *user_data, const char *error)
+{
+   url_task_dialog_label(msg_hash_to_str(MSG_URL_ARCHIVE_PASSWORD_PROMPT),
+         url_archive_pass_cb);
+}
+
+static void url_archive_email_cb(void *userdata, const char *line)
+{
+   if (string_is_empty(line))
+   {
+      menu_input_dialog_end();
+      return;
+   }
+   strlcpy(url_archive_st.email, line, sizeof(url_archive_st.email));
+   menu_input_dialog_end();
+   url_task_next_pass(url_archive_open_pass_callback);
+}
+#endif
+
+void task_url_archive_login_prompt(void)
+{
+#ifdef HAVE_MENU
+   if (url_archive_st.busy)
+   {
+      url_task_notify(msg_hash_to_str(MSG_URL_CONTENT_BUSY),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+      return;
+   }
+   url_task_dialog_label(msg_hash_to_str(MSG_URL_ARCHIVE_EMAIL_PROMPT),
+         url_archive_email_cb);
+#endif
 }
 
 #endif /* HAVE_NETWORKING */

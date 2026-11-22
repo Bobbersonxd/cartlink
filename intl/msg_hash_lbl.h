@@ -1557,6 +1557,14 @@ MSG_HASH(
    "load_from_url"
    )
 MSG_HASH(
+   MENU_ENUM_LABEL_URL_ARCHIVE_ACCOUNT,
+   "url_archive_account"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_URL_FORGET_LOGINS,
+   "url_forget_logins"
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_DOWNLOAD_CORE_CONTENT,
    "download_core_content"
    )

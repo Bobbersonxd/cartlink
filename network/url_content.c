@@ -22,6 +22,7 @@
 #include <compat/strl.h>
 #include <encodings/base64.h>
 #include <lrc_hash.h>
+#include <formats/rjson.h>
 
 #include "url_content.h"
 
@@ -940,6 +941,215 @@ bool url_content_looks_like_html(const uint8_t *data, size_t len)
             break;
       if (k == 5)
          return true;
+   }
+   return false;
+}
+
+/* ---------- form encoding ---------- */
+
+bool url_content_form_encode(char *out, size_t len, const char *s)
+{
+   static const char hex[] = "0123456789ABCDEF";
+   size_t o = 0;
+
+   if (!out || !len)
+      return false;
+   out[0] = '\0';
+   if (!s)
+      return true;
+
+   for (; *s; s++)
+   {
+      unsigned char c = (unsigned char)*s;
+      bool plain      = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+         || (c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_'
+         || c == '~';
+      size_t need     = (plain || c == ' ') ? 1 : 3;
+
+      if (o + need >= len)
+      {
+         out[0] = '\0';
+         return false;
+      }
+      if (plain)
+         out[o++] = (char)c;
+      else if (c == ' ')
+         out[o++] = '+';
+      else
+      {
+         out[o++] = '%';
+         out[o++] = hex[c >> 4];
+         out[o++] = hex[c & 15];
+      }
+   }
+   out[o] = '\0';
+   return true;
+}
+
+/* ---------- archive.org xauthn reply ---------- */
+
+#define UC_JSON_DEPTH 8
+#define UC_JSON_KEY   32
+
+static void uc_wipe(char *s, size_t len)
+{
+   volatile char *p = s;
+   while (len--)
+      *p++ = '\0';
+}
+
+/* True if the member path of the current value is exactly a/b/c
+ * (NULL ends the path early). */
+static bool uc_json_path(char keys[][UC_JSON_KEY], unsigned depth,
+      const char *a, const char *b, const char *c)
+{
+   const char *want[3];
+   unsigned n = 0;
+   unsigned i;
+
+   want[0] = a;
+   want[1] = b;
+   want[2] = c;
+   while (n < 3 && want[n])
+      n++;
+   if (depth != n)
+      return false;
+   for (i = 0; i < n; i++)
+      if (strcmp(keys[i + 1], want[i]) != 0)
+         return false;
+   return true;
+}
+
+bool url_content_parse_archive_login(const char *json, size_t json_len,
+      char *access, size_t alen, char *secret, size_t slen,
+      char *err, size_t elen)
+{
+   /* keys[d] = member name of the current value at object depth d;
+    * "[" marks an array level, so nothing below it can match. */
+   char keys[UC_JSON_DEPTH + 1][UC_JSON_KEY];
+   char reason[128];
+   char error[128];
+   rjson_t *rj;
+   int success     = -1;   /* -1 unseen, 0 false, 1 true */
+   bool broken     = false;
+   bool too_long   = false;
+   bool got_access = false;
+   bool got_secret = false;
+
+   if (access && alen)
+      access[0] = '\0';
+   if (secret && slen)
+      secret[0] = '\0';
+   if (err && elen)
+      err[0] = '\0';
+   reason[0] = '\0';
+   error[0]  = '\0';
+   memset(keys, 0, sizeof(keys));
+
+   if (!json || !json_len || !access || !alen || !secret || !slen
+         || !(rj = rjson_open_buffer(json, json_len)))
+   {
+      if (err && elen)
+         strlcpy(err, "unexpected reply", elen);
+      return false;
+   }
+
+   for (;;)
+   {
+      enum rjson_type t = rjson_next(rj);
+      unsigned depth;
+      bool in_object;
+      bool is_name;
+
+      if (t == RJSON_DONE)
+         break;
+      if (t == RJSON_ERROR)
+      {
+         broken = true;
+         break;
+      }
+
+      depth     = rjson_get_context_depth(rj);
+      in_object = rjson_get_context_type(rj) == RJSON_OBJECT;
+      is_name   = in_object && t == RJSON_STRING
+         && (rjson_get_context_count(rj) & 1);
+
+      if (t == RJSON_OBJECT || t == RJSON_ARRAY)
+      {
+         /* depth is now the new level; values of the parent were
+          * named by keys[depth - 1]. */
+         if (depth <= UC_JSON_DEPTH)
+         {
+            if (t == RJSON_ARRAY)
+               strlcpy(keys[depth], "[", UC_JSON_KEY);
+            else
+               keys[depth][0] = '\0';
+         }
+         continue;
+      }
+      if (depth == 0 || depth > UC_JSON_DEPTH)
+         continue;
+      if (is_name)
+      {
+         const char *name = rjson_get_string(rj, NULL);
+         if (strlcpy(keys[depth], name, UC_JSON_KEY) >= UC_JSON_KEY)
+            strlcpy(keys[depth], "?", UC_JSON_KEY);
+         continue;
+      }
+      if (!in_object)
+         continue;
+
+      /* A value; its parents must all be objects (no "[" on the path). */
+      if (t == RJSON_TRUE || t == RJSON_FALSE)
+      {
+         if (uc_json_path(keys, depth, "success", NULL, NULL))
+            success = (t == RJSON_TRUE) ? 1 : 0;
+      }
+      else if (t == RJSON_STRING)
+      {
+         const char *v = rjson_get_string(rj, NULL);
+         if (uc_json_path(keys, depth, "values", "s3", "access"))
+         {
+            if (strlcpy(access, v, alen) >= alen)
+               too_long = true;
+            got_access = access[0] != '\0';
+         }
+         else if (uc_json_path(keys, depth, "values", "s3", "secret"))
+         {
+            if (strlcpy(secret, v, slen) >= slen)
+               too_long = true;
+            got_secret = secret[0] != '\0';
+         }
+         else if (uc_json_path(keys, depth, "values", "reason", NULL))
+            strlcpy(reason, v, sizeof(reason));
+         else if (uc_json_path(keys, depth, "error", NULL, NULL))
+            strlcpy(error, v, sizeof(error));
+      }
+   }
+   rjson_free(rj);
+
+   if (!broken && success == 1 && got_access && got_secret && !too_long)
+      return true;
+
+   uc_wipe(access, alen);
+   uc_wipe(secret, slen);
+   if (err && elen)
+   {
+      if (broken || success == -1)
+         strlcpy(err, "unexpected reply", elen);
+      else if (success == 1)
+         strlcpy(err, too_long ? "keys too long" : "no keys in the reply",
+               elen);
+      else if (strcmp(reason, "account_bad_password") == 0)
+         strlcpy(err, "wrong email or password", elen);
+      else if (strcmp(reason, "account_not_found") == 0)
+         strlcpy(err, "no account with that email", elen);
+      else if (reason[0])
+         strlcpy(err, reason, elen);
+      else if (error[0])
+         strlcpy(err, error, elen);
+      else
+         strlcpy(err, "sign-in refused", elen);
    }
    return false;
 }

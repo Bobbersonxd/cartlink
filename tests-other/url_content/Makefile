@@ -11,6 +11,10 @@ CFLAGS  += -std=gnu89 -Wall -Wextra -Wno-unused-parameter -Wno-implicit-fallthro
 
 SRCS := test_url_content.c \
         ../../network/url_content.c \
+        $(LRC)/formats/json/rjson.c \
+        $(LRC)/streams/interface_stream.c \
+        $(LRC)/streams/memory_stream.c \
+        $(LRC)/encodings/encoding_crc32.c \
         ../../network/url_logins.c \
         $(LRC)/file/config_file.c \
         $(LRC)/file/file_path.c \
@@ -31,7 +35,12 @@ BIN := test_url_content
 
 FETCH_SRCS := test_url_fetch.c \
         ../../network/url_fetch.c \
+        ../../network/url_archive_org.c \
         ../../network/url_content.c \
+        $(LRC)/formats/json/rjson.c \
+        $(LRC)/streams/interface_stream.c \
+        $(LRC)/streams/memory_stream.c \
+        $(LRC)/encodings/encoding_crc32.c \
         ../../network/url_logins.c \
         $(LRC)/net/net_http.c \
         $(LRC)/net/net_compat.c \
@@ -66,7 +75,7 @@ $(BIN): $(SRCS) ../../network/url_content.h ../../network/url_logins.h
 test: $(BIN)
 	./$(BIN)
 
-$(FETCH_BIN): $(FETCH_SRCS) ../../network/url_fetch.h ../../network/url_content.h ../../network/url_logins.h
+$(FETCH_BIN): $(FETCH_SRCS) ../../network/url_fetch.h ../../network/url_archive_org.h ../../network/url_content.h ../../network/url_logins.h
 	$(CC) $(CFLAGS) -o $@ $(FETCH_SRCS)
 
 # Starts serve.py on a free port, waits until it answers, runs the

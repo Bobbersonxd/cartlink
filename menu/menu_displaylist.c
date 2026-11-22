@@ -9251,6 +9251,22 @@ unsigned menu_displaylist_build_list(
                   MENU_ENUM_LABEL_STDIN_CMD_ENABLE,
                   PARSE_ONLY_BOOL, false) == 0)
                count++;
+
+#ifdef HAVE_NETWORKING
+            /* "Load from URL" logins */
+            if (menu_entries_append(list,
+                     msg_hash_to_str(MENU_ENUM_LABEL_VALUE_URL_ARCHIVE_ACCOUNT),
+                     msg_hash_to_str(MENU_ENUM_LABEL_URL_ARCHIVE_ACCOUNT),
+                     MENU_ENUM_LABEL_URL_ARCHIVE_ACCOUNT,
+                     MENU_SETTING_ACTION, 0, 0, NULL))
+               count++;
+            if (menu_entries_append(list,
+                     msg_hash_to_str(MENU_ENUM_LABEL_VALUE_URL_FORGET_LOGINS),
+                     msg_hash_to_str(MENU_ENUM_LABEL_URL_FORGET_LOGINS),
+                     MENU_ENUM_LABEL_URL_FORGET_LOGINS,
+                     MENU_SETTING_ACTION, 0, 0, NULL))
+               count++;
+#endif
          }
          break;
       case DISPLAYLIST_NETPLAY_LOBBY_FILTERS_LIST:

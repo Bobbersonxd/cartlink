@@ -316,6 +316,54 @@ MSG_HASH(
    "Download failed"
    )
 MSG_HASH(
+   MSG_URL_CONTENT_CLI_LOGIN_NEEDED,
+   "Login needed for %s: use the menu once to save it"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_URL_ARCHIVE_ACCOUNT,
+   "archive.org Account"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_URL_ARCHIVE_ACCOUNT,
+   "Sign in to archive.org so Load from URL can download items that need an account. Only the account's access keys are saved, never the password."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_URL_FORGET_LOGINS,
+   "Forget Saved Logins"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_URL_FORGET_LOGINS,
+   "Delete every username, password and archive.org key saved by Load from URL."
+   )
+MSG_HASH(
+   MSG_URL_ARCHIVE_EMAIL_PROMPT,
+   "archive.org email"
+   )
+MSG_HASH(
+   MSG_URL_ARCHIVE_PASSWORD_PROMPT,
+   "archive.org password"
+   )
+MSG_HASH(
+   MSG_URL_ARCHIVE_SIGNING_IN,
+   "Signing in to archive.org"
+   )
+MSG_HASH(
+   MSG_URL_ARCHIVE_SIGNED_IN,
+   "Signed in to archive.org"
+   )
+MSG_HASH(
+   MSG_URL_ARCHIVE_SIGN_IN_FAILED,
+   "archive.org sign-in failed: %s"
+   )
+MSG_HASH(
+   MSG_URL_LOGINS_FORGOTTEN,
+   "Saved logins removed"
+   )
+MSG_HASH(
+   MSG_URL_LOGINS_FORGET_FAILED,
+   "Could not remove the saved logins file"
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_VALUE_OPEN_ARCHIVE,
    "Browse Archive"
    )

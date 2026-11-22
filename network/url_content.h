@@ -74,6 +74,19 @@ bool url_content_digest_auth_header(char *out, size_t len,
  * with "<!doctype html" or "<html" (case-insensitive). */
 bool url_content_looks_like_html(const uint8_t *data, size_t len);
 
+/* application/x-www-form-urlencoded value: unreserved characters
+ * (A-Z a-z 0-9 - . _ ~) as is, space as '+', everything else %XX.
+ * Returns false (and an empty out) if the result does not fit. */
+bool url_content_form_encode(char *out, size_t len, const char *s);
+
+/* Reads an archive.org xauthn login reply. True only for
+ * "success": true with non-empty values.s3.access and values.s3.secret
+ * that fit; then err is "". Otherwise access and secret are emptied and
+ * err gets a short reason (from values.reason or error). */
+bool url_content_parse_archive_login(const char *json, size_t json_len,
+      char *access, size_t alen, char *secret, size_t slen,
+      char *err, size_t elen);
+
 /* Test hook: forces the digest client nonce. NULL restores random. */
 void url_content_set_test_cnonce(const char *cnonce);
 

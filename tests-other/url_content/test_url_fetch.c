@@ -24,6 +24,7 @@
 #include <sys/stat.h>
 
 #include "../../network/url_fetch.h"
+#include "../../network/url_archive_org.h"
 #include "../../network/url_logins.h"
 
 static int g_checks   = 0;
@@ -37,6 +38,17 @@ static char g_logins[300];
    if (!(x)) { \
       g_failures++; \
       printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #x); \
+   } \
+} while (0)
+
+#define EXPECT_STR(a, b) do { \
+   const char *ea_ = (a); \
+   const char *eb_ = (b); \
+   g_checks++; \
+   if (!ea_ || !eb_ || strcmp(ea_, eb_) != 0) { \
+      g_failures++; \
+      printf("FAIL %s:%d: \"%s\" != \"%s\"\n", __FILE__, __LINE__, \
+            ea_ ? ea_ : "(null)", eb_ ? eb_ : "(null)"); \
    } \
 } while (0)
 
@@ -419,6 +431,65 @@ static void rm_tree(const char *dir)
       printf("warning: could not remove %s\n", dir);
 }
 
+static void test_archive_login(void)
+{
+   char u[256];
+   char access[64];
+   char secret[64];
+   char err[128];
+   char a2[64];
+   char s2[64];
+
+   url(u, sizeof(u), "/xauthn/?op=login");
+   url_archive_org_set_test_url(u);
+
+   /* Wrong password: refused, nothing saved. */
+   EXPECT(!url_archive_org_login("bob+ia@example.com", "nope",
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT_STR(err, "wrong email or password");
+   EXPECT(!url_logins_get_archive_keys(a2, sizeof(a2), s2, sizeof(s2)));
+
+   EXPECT(!url_archive_org_login("nobody@example.com", "x",
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT_STR(err, "no account with that email");
+
+   /* A web page instead of JSON. */
+   EXPECT(!url_archive_org_login("page@example.com", "x",
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT_STR(err, "unexpected reply");
+
+   /* Empty input is refused before any request. */
+   EXPECT(!url_archive_org_login("", "x",
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT(!url_archive_org_login("a@b.c", "",
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+
+   /* Right login (form-encoding needed for '+', '&', ' ', '='):
+    * keys come back and are saved. */
+   EXPECT(url_archive_org_login("bob+ia@example.com", "p&ss w=rd",
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT_STR(access, "ACCESSKEY");
+   EXPECT_STR(secret, "SECRETKEY");
+   EXPECT(url_logins_get_archive_keys(a2, sizeof(a2), s2, sizeof(s2)));
+   EXPECT_STR(a2, "ACCESSKEY");
+   EXPECT_STR(s2, "SECRETKEY");
+
+   /* A redirect is not followed (the password is never re-sent). */
+   url(u, sizeof(u), "/xauthn/redirect?op=login");
+   url_archive_org_set_test_url(u);
+   EXPECT(!url_archive_org_login("bob+ia@example.com", "p&ss w=rd",
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+
+   /* Nothing listening: a clean failure. */
+   url_archive_org_set_test_url("http://127.0.0.1:1/xauthn/?op=login");
+   EXPECT(!url_archive_org_login("bob+ia@example.com", "p&ss w=rd",
+         access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT(err[0] != '\0');
+
+   url_archive_org_set_test_url(NULL);
+   url_logins_forget_all();
+}
+
 int main(int argc, char **argv)
 {
    char tmpl[] = "/tmp/url_fetch_test.XXXXXX";
@@ -452,6 +523,7 @@ int main(int argc, char **argv)
    test_redirect_limits();
    test_empty();
    test_huge();
+   test_archive_login();
 
    rm_tree(g_root);
 

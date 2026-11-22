@@ -112,6 +112,16 @@ bool task_push_netplay_nat_close(void *data);
  * like the file browser does. False if a download is already running. */
 bool task_push_url_content_load(const char *url);
 
+/* Command line: downloads url into the url_cache folder, blocking, with
+ * progress in the log. True with out_path set to the cached file;
+ * false after printing why (e.g. a login is needed). */
+bool task_url_content_fetch_cli(const char *url,
+      char *out_path, size_t len);
+
+/* Menu: asks for an archive.org email and password, then signs in on a
+ * background thread and saves the account's S3 keys. */
+void task_url_archive_login_prompt(void);
+
 /* Core updater tasks */
 
 void *task_push_get_core_updater_list(

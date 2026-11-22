@@ -85,6 +85,7 @@
 
 #ifdef HAVE_NETWORKING
 #include "../../network/netplay/netplay.h"
+#include "../../network/url_logins.h"
 #ifdef HAVE_WIFI
 #include "../../network/wifi_driver.h"
 #endif
@@ -8446,6 +8447,24 @@ static void action_ok_load_from_url_cb(void *userdata, const char *line)
       menu_input_dialog_end();
 }
 
+static int action_ok_url_archive_account(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   task_url_archive_login_prompt();
+   return 0;
+}
+
+static int action_ok_url_forget_logins(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   const char *msg = msg_hash_to_str(url_logins_forget_all()
+         ? MSG_URL_LOGINS_FORGOTTEN : MSG_URL_LOGINS_FORGET_FAILED);
+
+   runloop_msg_queue_push(msg, strlen(msg), 1, 180, true, NULL,
+         MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
+   return 0;
+}
+
 static int action_ok_load_from_url(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx)
 {
@@ -9331,6 +9350,8 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
          {MENU_ENUM_LABEL_DOWNLOADED_FILE_DETECT_CORE_LIST,    action_ok_push_downloads_dir},
 #ifdef HAVE_NETWORKING
          {MENU_ENUM_LABEL_LOAD_FROM_URL,                       action_ok_load_from_url},
+         {MENU_ENUM_LABEL_URL_ARCHIVE_ACCOUNT,                 action_ok_url_archive_account},
+         {MENU_ENUM_LABEL_URL_FORGET_LOGINS,                   action_ok_url_forget_logins},
 #endif
          {MENU_ENUM_LABEL_DETECT_CORE_LIST_OK,                 action_ok_file_load_detect_core},
          {MENU_ENUM_LABEL_DETECT_CORE_LIST_OK_CURRENT_CORE,    action_ok_file_load_current_core},
