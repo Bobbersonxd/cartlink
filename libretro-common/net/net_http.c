@@ -108,6 +108,9 @@ typedef struct request
 struct http_t
 {
    bool err;
+   bool too_big;      /* body over max_body, or a buffer could not grow */
+   bool no_redirect;  /* return 3xx responses instead of following them */
+   size_t max_body;   /* 0 = no limit */
 
    struct conn_pool_entry *conn;
    bool ssl;
@@ -129,8 +132,10 @@ struct http_connection_t
    char *useragent;
    char *headers;
    size_t contentlength; /* ptr alignment */
+   size_t max_body;
    int port;
    bool ssl;
+   bool no_redirect;
 };
 
 struct dns_cache_entry
@@ -536,6 +541,20 @@ void net_http_connection_set_user_agent(
    conn->useragent = user_agent ? strdup(user_agent) : NULL;
 }
 
+void net_http_connection_set_follow_redirects(
+      struct http_connection_t *conn, bool follow)
+{
+   if (conn)
+      conn->no_redirect = !follow;
+}
+
+void net_http_connection_set_max_body(
+      struct http_connection_t *conn, size_t max_body)
+{
+   if (conn)
+      conn->max_body = max_body;
+}
+
 void net_http_connection_set_headers(
       struct http_connection_t *conn, const char *headers)
 {
@@ -844,6 +863,8 @@ struct http_t *net_http_new(struct http_connection_t *conn)
    state->request.useragent     = conn->useragent ? strdup(conn->useragent) : NULL;
    state->request.headers       = conn->headers ? strdup(conn->headers) : NULL;
    state->request.port          = conn->port;
+   state->no_redirect           = conn->no_redirect;
+   state->max_body              = conn->max_body;
 
    state->response.status  = -1;
    state->response.buflen  = 64 * 1024;  /* Start with larger buffer to reduce reallocations */
@@ -1161,6 +1182,44 @@ int net_http_fd(struct http_t *state)
    return state->conn->fd;
 }
 
+/* Grows the response buffer to buflen bytes. On failure (or over
+ * max_body) sets err + too_big and keeps the old buffer. */
+static bool net_http_grow(struct http_t *state, size_t buflen)
+{
+   struct response *response = (struct response*)&state->response;
+   char *tmp;
+   if (state->max_body && buflen > state->max_body)
+   {
+      if (response->pos > state->max_body)
+      {
+         state->too_big = true;
+         state->err     = true;
+         return false;
+      }
+      buflen = state->max_body + 1;
+   }
+   if (!(tmp = (char*)realloc(response->data, buflen)))
+   {
+      state->too_big = true;
+      state->err     = true;
+      return false;
+   }
+   response->data   = tmp;
+   response->buflen = buflen;
+   return true;
+}
+
+/* Shrinks the buffer to len; a failed shrink keeps the bigger one. */
+static void net_http_shrink(struct response *response, size_t len)
+{
+   char *tmp = (char*)realloc(response->data, len);
+   if (tmp || !len)
+   {
+      response->data   = tmp;
+      response->buflen = len;
+   }
+}
+
 static ssize_t net_http_receive_header(struct http_t *state, ssize_t len)
 {
    struct response *response = (struct response*)&state->response;
@@ -1237,16 +1296,30 @@ static ssize_t net_http_receive_header(struct http_t *state, ssize_t len)
       response->pos = 0;
       if (response->bodytype == T_LEN)
       {
+         char *tmp;
+         if (state->max_body && response->len > state->max_body)
+         {
+            state->too_big = true;
+            state->err     = true;
+            return -1;
+         }
+         tmp = (char*)realloc(response->data, response->len);
+         if (!tmp && response->len)
+         {
+            state->too_big = true;
+            state->err     = true;
+            return -1;
+         }
          response->buflen = response->len;
-         response->data   = (char*)realloc(response->data, response->buflen);
+         response->data   = tmp;
       }
    }
    else
    {
       if (response->pos >= response->buflen - 64)
       {
-         response->buflen *= 2;
-         response->data    = (char*)realloc(response->data, response->buflen);
+         if (!net_http_grow(state, response->buflen * 2))
+            return -1;
       }
    }
    return len;
@@ -1262,7 +1335,7 @@ static bool net_http_receive_body(struct http_t *state, ssize_t newlen)
          return false;
       response->part      = P_DONE;
       if (response->buflen != response->len)
-         response->data      = (char*)realloc(response->data, response->len);
+         net_http_shrink(response, response->len);
       return true;
    }
 
@@ -1306,7 +1379,7 @@ parse_again:
                {
                   response->part = P_DONE;
                   response->len  = response->pos;
-                  response->data = (char*)realloc(response->data, response->len);
+                  net_http_shrink(response, response->len);
                   return true;
                }
                goto parse_again;
@@ -1337,15 +1410,15 @@ parse_again:
       {
          response->part = P_DONE;
          if (response->buflen != response->len)
-            response->data = (char*)realloc(response->data, response->len);
+            net_http_shrink(response, response->len);
          return true;
       }
    }
 
    if (response->pos >= response->buflen)
    {
-      response->buflen *= 2;
-      response->data    = (char*)realloc(response->data, response->buflen);
+      if (!net_http_grow(state, response->buflen * 2))
+         return false;
    }
    return true;
 }
@@ -1396,8 +1469,17 @@ static bool net_http_redirect(struct http_t *state, const char *location)
    state->request_sent       = false;
    state->response.part      = P_HEADER_TOP;
    state->response.status    = -1;
-   state->response.buflen    = 64 * 1024;  /* Start with larger buffer to reduce reallocations */
-   state->response.data      = (char*)realloc(state->response.data, state->response.buflen);
+   {
+      char *tmp = (char*)realloc(state->response.data, 64 * 1024);
+      if (!tmp)
+      {
+         state->too_big = true;
+         state->err     = true;
+         return true;
+      }
+      state->response.data   = tmp;
+      state->response.buflen = 64 * 1024;  /* Start with larger buffer to reduce reallocations */
+   }
    state->response.pos       = 0;
    state->response.len       = 0;
    state->response.bodytype  = T_FULL;
@@ -1468,6 +1550,14 @@ bool net_http_update(struct http_t *state, size_t* progress, size_t* total)
          return true;
       }
       _len = net_http_receive_header(state, _len);
+      if (state->too_big)
+      {
+         net_http_conn_pool_remove(state->conn);
+         state->conn      = NULL;
+         response->part   = P_DONE;
+         response->status = -1;
+         return true;
+      }
    }
 
    if (response->part >= P_BODY && response->part < P_DONE)
@@ -1511,7 +1601,7 @@ bool net_http_update(struct http_t *state, size_t* progress, size_t* total)
       state->conn->in_use = false;
    state->conn = NULL;
 
-   if (response->status >= 300 && response->status < 400)
+   if (!state->no_redirect && response->status >= 300 && response->status < 400)
    {
       for (_len = 0; (size_t)_len < response->headers->size; _len++)
       {
@@ -1560,6 +1650,11 @@ struct string_list *net_http_response_headers(struct http_t *state)
    if (!state)
       return NULL;
    return state->response.headers;
+}
+
+bool net_http_too_big(struct http_t *state)
+{
+   return state && state->too_big;
 }
 
 /**

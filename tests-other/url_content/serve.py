@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-# Local test server for test_url_fetch.c. Silent, 127.0.0.1 only.
-# Usage: serve.py <port>
+# Local test server for test_url_fetch.c. Silent, loopback only:
+# listens on 127.0.0.1 and 127.0.0.2 (a "different host" for the
+# cross-host redirect test). Usage: serve.py <port>
 
 import hashlib
 import http.server
 import socketserver
 import sys
+import threading
 
 GAME = bytes((i * 7 + 3) & 0xFF for i in range(8192))
 PAGE = b"<!DOCTYPE html>\n<html><body>Sign in</body></html>\n"
@@ -14,6 +16,7 @@ PASS = "pw"
 REALM = "retro"
 NONCE = "dcd98b7102dd2f0e8b11d0f600bfb0c093"
 BIG = 300 * 1024 * 1024
+HUGE = 3 * 1024 * 1024 * 1024
 
 
 def md5(s):
@@ -86,9 +89,47 @@ class Handler(http.server.BaseHTTPRequestHandler):
             want = md5(ha1 + ":" + NONCE + ":" + ha2)
         return p.get("response") == want
 
+    def redirect(self, location):
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.send_header("Connection", "close")
+        self.end_headers()
+
     def do_GET(self):
         path = self.path
-        if path == "/game.sfc":
+        port = self.server.server_address[1]
+        if path == "/echoauth":
+            auth = self.headers.get("Authorization")
+            body = ("auth:" + auth).encode() if auth else b"none"
+            self.send_body(200, body, "text/plain")
+        elif path == "/xhost":
+            self.redirect("http://127.0.0.2:%d/echoauth" % port)
+        elif path == "/samehost":
+            self.redirect("/basic/game.sfc")
+        elif path == "/loop":
+            self.redirect("/loop")
+        elif path.startswith("/chain/"):
+            n = int(path[len("/chain/"):])
+            self.redirect("/game.sfc" if n <= 1 else "/chain/%d" % (n - 1))
+        elif path == "/rel/a":
+            self.redirect("b")
+        elif path == "/rel/b":
+            self.send_body(200, GAME)
+        elif path == "/empty":
+            self.send_body(200, b"")
+        elif path == "/huge":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(HUGE))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            try:
+                self.wfile.write(bytes(1024))
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            self.close_connection = True
+        elif path == "/game.sfc":
             self.send_body(200, GAME)
         elif path == "/nodisp?id=1":
             self.send_body(200, GAME, extra=[
@@ -110,11 +151,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                      'Digest realm="' + REALM + '", qop="auth", nonce="'
                      + NONCE + '", opaque="5ccc069c403ebaf9f0171e9517f40e41"')])
         elif path == "/redirect":
-            self.send_response(302)
-            self.send_header("Location", "/game.sfc")
-            self.send_header("Content-Length", "0")
-            self.send_header("Connection", "close")
-            self.end_headers()
+            self.redirect("/game.sfc")
         elif path == "/drop":
             self.send_response(200)
             self.send_header("Content-Type", "application/octet-stream")
@@ -153,6 +190,8 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 def main():
     port = int(sys.argv[1])
+    other = Server(("127.0.0.2", port), Handler)
+    threading.Thread(target=other.serve_forever, daemon=True).start()
     Server(("127.0.0.1", port), Handler).serve_forever()
 
 

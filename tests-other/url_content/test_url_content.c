@@ -213,6 +213,20 @@ static void test_basic_auth(void)
    EXPECT_STR(out, "Authorization: Basic Ym9iOnB3\r\n");
 }
 
+static void test_archive_auth(void)
+{
+   char hdr[128];
+   EXPECT(url_content_host_is_archive("archive.org"));
+   EXPECT(url_content_host_is_archive("ia800.us.archive.org"));
+   EXPECT(url_content_host_is_archive("Archive.ORG"));
+   EXPECT(!url_content_host_is_archive("evilarchive.org"));
+   EXPECT(!url_content_host_is_archive("archive.org.evil.com"));
+   EXPECT(!url_content_host_is_archive(""));
+   EXPECT(!url_content_host_is_archive(NULL));
+   url_content_archive_auth_header(hdr, sizeof(hdr), "AKEY", "SKEY");
+   EXPECT_STR(hdr, "Authorization: LOW AKEY:SKEY\r\n");
+}
+
 static void test_digest_auth(void)
 {
    char out[1024];
@@ -420,6 +434,7 @@ int main(void)
    test_host();
    test_basic_auth();
    test_digest_auth();
+   test_archive_auth();
    test_is_downloadable();
    test_looks_like_html();
    test_logins();

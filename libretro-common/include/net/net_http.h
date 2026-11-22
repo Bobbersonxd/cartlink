@@ -51,6 +51,14 @@ void net_http_connection_set_user_agent(struct http_connection_t *conn, const ch
 
 void net_http_connection_set_headers(struct http_connection_t *conn, const char *headers);
 
+/* Default true. When false, a 3xx response is returned as is (status
+ * and Location header) instead of being followed. */
+void net_http_connection_set_follow_redirects(struct http_connection_t *conn, bool follow);
+
+/* Default 0 (no limit). A body larger than max_body bytes fails the
+ * request; net_http_too_big() then returns true. */
+void net_http_connection_set_max_body(struct http_connection_t *conn, size_t max_body);
+
 void net_http_connection_set_content(struct http_connection_t *conn, const char *content_type,
       size_t content_length, const void *content);
 
@@ -117,6 +125,14 @@ struct string_list *net_http_headers(struct http_t *state);
  * net_http_headers: the caller frees it with string_list_free.
  **/
 struct string_list *net_http_response_headers(struct http_t *state);
+
+/**
+ * net_http_too_big:
+ *
+ * @return true if the request failed because the body was over the
+ * connection's max_body or a buffer could not be allocated.
+ **/
+bool net_http_too_big(struct http_t *state);
 
 /**
  * net_http_data:

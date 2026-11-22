@@ -37,6 +37,8 @@
 #define UF_HDR_LEN      2048
 #define UF_PREFIX_LEN   17         /* 16 hex + '_' */
 #define UF_STALL_USEC   30000000   /* give up after 30 s without data */
+#define UF_MAX_HOPS     10
+#define UF_MAX_BODY     ((size_t)2048 * 1024 * 1024)   /* 2 GiB */
 
 enum uf_auth
 {
@@ -53,6 +55,7 @@ struct uf_response
    struct string_list *headers;
    int status;
    bool err;
+   bool too_big;              /* over UF_MAX_BODY or out of memory */
 };
 
 static void uf_set_err(char *err, size_t err_len, const char *msg)
@@ -158,14 +161,63 @@ static bool uf_length_matches(const char *value, size_t len)
    return n == len;
 }
 
-static bool uf_host_is_archive(const char *host)
+/* Absolute URL for a Location value seen while fetching base:
+ * absolute http(s), scheme-relative, absolute path, or relative path. */
+static bool uf_resolve_location(char *out, size_t len, const char *base,
+      const char *loc)
 {
-   size_t hl = strlen(host);
-   size_t al = STRLEN_CONST("archive.org");
-   if (hl < al || !string_is_equal_case_insensitive(host + hl - al,
-            "archive.org"))
+   const char *auth;
+   const char *path;
+   size_t n;
+
+   while (*loc == ' ' || *loc == '\t')
+      loc++;
+   if (!*loc)
       return false;
-   return hl == al || host[hl - al - 1] == '.';
+   if (strstr(loc, "://"))
+   {
+      if (     !string_starts_with_case_insensitive(loc, "http://")
+            && !string_starts_with_case_insensitive(loc, "https://"))
+         return false;
+      return strlcpy(out, loc, len) < len;
+   }
+
+   if (!(auth = strstr(base, "://")))
+      return false;
+   auth += 3;
+   if (loc[0] == '/' && loc[1] == '/')
+   {
+      n = (size_t)(auth - base) - 2; /* "http:" */
+      if (n + strlen(loc) + 1 > len)
+         return false;
+      memcpy(out, base, n);
+      out[n] = '\0';
+      return strlcat(out, loc, len) < len;
+   }
+
+   path = auth;
+   while (*path && *path != '/' && *path != '?' && *path != '#')
+      path++;
+   if (loc[0] == '/')
+      n = (size_t)(path - base);
+   else
+   {
+      /* Directory of the current path (query and fragment dropped). */
+      const char *end   = path + strcspn(path, "?#");
+      const char *slash = NULL;
+      const char *p;
+      for (p = path; p < end; p++)
+         if (*p == '/')
+            slash = p;
+      n = slash ? (size_t)(slash + 1 - base) : (size_t)(path - base);
+   }
+   if (n + 2 > len)
+      return false;
+   memcpy(out, base, n);
+   out[n] = '\0';
+   if (loc[0] != '/' && (!n || out[n - 1] != '/'))
+      strlcat(out, "/", len);
+   return strlcat(out, loc, len) < len;
 }
 
 /* Blocking GET. Fills r; returns false only if no request could be
@@ -192,6 +244,8 @@ static bool uf_get(const char *url, const char *headers_or_null,
    if (headers_or_null && *headers_or_null)
       net_http_connection_set_headers(conn, headers_or_null);
    net_http_connection_set_user_agent(conn, "RetroArch");
+   net_http_connection_set_follow_redirects(conn, false);
+   net_http_connection_set_max_body(conn, UF_MAX_BODY);
 
    http = net_http_new(conn);
    net_http_connection_free(conn);
@@ -228,6 +282,7 @@ static bool uf_get(const char *url, const char *headers_or_null,
       }
    }
 
+   r->too_big = net_http_too_big(http);
    r->status  = net_http_status(http);
    r->err     = r->err || r->status < 0;
    r->data    = net_http_data(http, &r->len, true);
@@ -268,13 +323,50 @@ static void uf_scan_cache(const char *cache_dir, const char *prefix,
    retro_closedir(dir);
 }
 
+/* Picks the Authorization header for one hop. Logins (explicit or
+ * saved) go only to the original host; archive keys only to
+ * archive.org hosts; nothing once an https hop led to plain http. */
+static enum uf_auth uf_pick_auth(char *auth, size_t auth_len,
+      const char *hop_host, const char *orig_host, bool downgraded,
+      bool have_login, const char *user, const char *pass)
+{
+   auth[0] = '\0';
+   if (downgraded)
+      return UF_AUTH_NONE;
+   if (have_login && string_is_equal(hop_host, orig_host))
+   {
+      url_content_basic_auth_header(auth, auth_len, user, pass);
+      return UF_AUTH_BASIC;
+   }
+   if (url_content_host_is_archive(hop_host))
+   {
+      char access[256];
+      char secret[256];
+      enum uf_auth kind = UF_AUTH_NONE;
+      if (url_logins_get_archive_keys(access, sizeof(access),
+               secret, sizeof(secret)))
+      {
+         url_content_archive_auth_header(auth, auth_len, access, secret);
+         kind = UF_AUTH_LOW;
+      }
+      memset(access, 0, sizeof(access));
+      memset(secret, 0, sizeof(secret));
+      return kind;
+   }
+   return UF_AUTH_NONE;
+}
+
 enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
       const char *user_or_null, const char *pass_or_null,
       char *out_path, size_t out_len, char *challenge, size_t ch_len,
       char *err, size_t err_len, url_fetch_progress_t cb, void *ud)
 {
    char fixed[UF_URL_LEN];
+   char cur[UF_URL_LEN];
+   char next[UF_URL_LEN];
+   char uri[UF_URL_LEN];
    char host[256];
+   char hop_host[256];
    char prefix[PATH_MAX_LENGTH];
    char found[PATH_MAX_LENGTH];
    char user[256];
@@ -286,7 +378,15 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
    const char *disp;
    const char *clen;
    struct uf_response r;
-   enum uf_auth auth_kind = UF_AUTH_NONE;
+   enum url_fetch_result ret = URL_FETCH_FAILED;
+   bool have_login           = false;
+   bool downgraded           = false;
+   unsigned hops             = 0;
+
+   memset(&r, 0, sizeof(r));
+   user[0] = '\0';
+   pass[0] = '\0';
+   auth[0] = '\0';
 
    if (out_path && out_len)
       out_path[0] = '\0';
@@ -298,7 +398,7 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
    if (string_is_empty(url) || string_is_empty(cache_dir))
    {
       uf_set_err(err, err_len, "No URL or cache folder.");
-      return URL_FETCH_FAILED;
+      goto end;
    }
 
    url_content_fix_link(fixed, sizeof(fixed), url);
@@ -306,12 +406,17 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
 
    /* The hash part of the cache name is the same for any file name. */
    url_content_cache_name(prefix, sizeof(prefix), fixed, "x");
+   if (strlen(prefix) < UF_PREFIX_LEN || prefix[UF_PREFIX_LEN - 1] != '_')
+   {
+      uf_set_err(err, err_len, "Cannot name the cache file.");
+      goto end;
+   }
    prefix[UF_PREFIX_LEN] = '\0';
 
    if (!path_is_directory(cache_dir) && !path_mkdir(cache_dir))
    {
       uf_set_err(err, err_len, "Cannot create the cache folder.");
-      return URL_FETCH_FAILED;
+      goto end;
    }
 
    uf_scan_cache(cache_dir, prefix, true, found, sizeof(found));
@@ -319,58 +424,75 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
    {
       if (out_path && out_len)
          fill_pathname_join_special(out_path, cache_dir, found, out_len);
-      return URL_FETCH_CACHED;
+      ret = URL_FETCH_CACHED;
+      goto end;
    }
 
-   /* Pick the credentials for the first try. */
-   auth[0] = '\0';
-   user[0] = '\0';
-   pass[0] = '\0';
    if (!string_is_empty(user_or_null))
    {
       strlcpy(user, user_or_null, sizeof(user));
       if (pass_or_null)
          strlcpy(pass, pass_or_null, sizeof(pass));
-      auth_kind = UF_AUTH_BASIC;
+      have_login = true;
    }
-   else if (url_logins_get(host, user, sizeof(user), pass, sizeof(pass)))
-      auth_kind = UF_AUTH_BASIC;
-   else if (uf_host_is_archive(host))
+   else
+      have_login = url_logins_get(host, user, sizeof(user),
+            pass, sizeof(pass));
+
+   /* Redirects are followed here, not by net_http, so that the
+    * credentials can be chosen again for every hop. */
+   strlcpy(cur, fixed, sizeof(cur));
+   for (;;)
    {
-      char access[256];
-      char secret[256];
-      if (url_logins_get_archive_keys(access, sizeof(access),
-               secret, sizeof(secret)))
+      enum uf_auth kind;
+      const char *loc;
+
+      url_content_host(hop_host, sizeof(hop_host), cur);
+      kind = uf_pick_auth(auth, sizeof(auth), hop_host, host, downgraded,
+            have_login, user, pass);
+
+      uf_response_free(&r);
+      if (!uf_get(cur, auth, &r, cb, ud))
       {
-         snprintf(auth, sizeof(auth), "Authorization: LOW %s:%s\r\n",
-               access, secret);
-         auth_kind = UF_AUTH_LOW;
+         uf_set_err(err, err_len, "Bad URL.");
+         goto end;
       }
-   }
-   if (auth_kind == UF_AUTH_BASIC)
-      url_content_basic_auth_header(auth, sizeof(auth), user, pass);
 
-   if (!uf_get(fixed, auth, &r, cb, ud))
-   {
-      uf_set_err(err, err_len, "Bad URL.");
-      return URL_FETCH_FAILED;
-   }
-
-   if (r.status == 401 && auth_kind == UF_AUTH_BASIC)
-   {
-      const char *digest = uf_challenge(r.headers, "Digest");
-      char uri[UF_URL_LEN];
-      uf_request_uri(uri, sizeof(uri), fixed);
-      if (digest && url_content_digest_auth_header(auth, sizeof(auth),
-               digest, "GET", uri, user, pass))
+      if (r.status == 401 && kind == UF_AUTH_BASIC)
       {
-         uf_response_free(&r);
-         if (!uf_get(fixed, auth, &r, cb, ud))
+         const char *digest = uf_challenge(r.headers, "Digest");
+         uf_request_uri(uri, sizeof(uri), cur);
+         if (digest && url_content_digest_auth_header(auth, sizeof(auth),
+                  digest, "GET", uri, user, pass))
          {
-            uf_set_err(err, err_len, "Bad URL.");
-            return URL_FETCH_FAILED;
+            uf_response_free(&r);
+            if (!uf_get(cur, auth, &r, cb, ud))
+            {
+               uf_set_err(err, err_len, "Bad URL.");
+               goto end;
+            }
          }
       }
+
+      if (     r.err
+            || r.status < 300 || r.status > 399
+            || !(loc = uf_header(r.headers, "Location")))
+         break;
+
+      if (++hops > UF_MAX_HOPS)
+      {
+         uf_set_err(err, err_len, "Too many redirects.");
+         goto end;
+      }
+      if (!uf_resolve_location(next, sizeof(next), cur, loc))
+      {
+         uf_set_err(err, err_len, "Bad redirect.");
+         goto end;
+      }
+      if (     string_starts_with_case_insensitive(cur, "https://")
+            && !string_starts_with_case_insensitive(next, "https://"))
+         downgraded = true;
+      strlcpy(cur, next, sizeof(cur));
    }
 
    if (r.status == 401)
@@ -381,17 +503,21 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
       if (ch && challenge && ch_len)
          strlcpy(challenge, ch, ch_len);
       uf_set_err(err, err_len, "Login needed.");
-      uf_response_free(&r);
-      return URL_FETCH_NEED_LOGIN;
+      ret = URL_FETCH_NEED_LOGIN;
+      goto end;
+   }
+
+   if (r.too_big)
+   {
+      uf_set_err(err, err_len, "File is too big.");
+      ret = URL_FETCH_TOO_BIG;
+      goto end;
    }
 
    if (r.err)
    {
-      /* net_http loses the buffer when growing it fails. */
-      bool oom = !r.data && r.total > 0;
-      uf_set_err(err, err_len, oom ? "Out of memory." : "Download failed.");
-      uf_response_free(&r);
-      return oom ? URL_FETCH_TOO_BIG : URL_FETCH_FAILED;
+      uf_set_err(err, err_len, "Download failed.");
+      goto end;
    }
 
    if (r.status < 200 || r.status > 299)
@@ -399,30 +525,34 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
       char msg[64];
       snprintf(msg, sizeof(msg), "HTTP error %d.", r.status);
       uf_set_err(err, err_len, msg);
-      uf_response_free(&r);
-      return URL_FETCH_FAILED;
+      goto end;
    }
 
-   if (!r.data && r.len > 0)
+   if (!r.len)
+   {
+      uf_set_err(err, err_len, "The server sent an empty file.");
+      goto end;
+   }
+
+   if (!r.data)
    {
       uf_set_err(err, err_len, "Out of memory.");
-      uf_response_free(&r);
-      return URL_FETCH_TOO_BIG;
+      ret = URL_FETCH_TOO_BIG;
+      goto end;
    }
 
    clen = uf_header(r.headers, "Content-Length");
    if (clen && !uf_length_matches(clen, r.len))
    {
       uf_set_err(err, err_len, "Download was cut short.");
-      uf_response_free(&r);
-      return URL_FETCH_FAILED;
+      goto end;
    }
 
    if (url_content_looks_like_html(r.data, r.len))
    {
       uf_set_err(err, err_len, "Got a web page, not a file.");
-      uf_response_free(&r);
-      return URL_FETCH_NOT_A_FILE;
+      ret = URL_FETCH_NOT_A_FILE;
+      goto end;
    }
 
    name[0] = '\0';
@@ -442,14 +572,19 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
    {
       filestream_delete(part_path);
       uf_set_err(err, err_len, "Cannot write the cache file.");
-      uf_response_free(&r);
-      return URL_FETCH_FAILED;
+      goto end;
    }
 
-   uf_response_free(&r);
    if (out_path && out_len)
       strlcpy(out_path, final_path, out_len);
-   return URL_FETCH_OK;
+   ret = URL_FETCH_OK;
+
+end:
+   uf_response_free(&r);
+   memset(user, 0, sizeof(user));
+   memset(pass, 0, sizeof(pass));
+   memset(auth, 0, sizeof(auth));
+   return ret;
 }
 
 #endif /* HAVE_NETWORKING */

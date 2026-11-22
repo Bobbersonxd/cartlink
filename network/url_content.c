@@ -619,7 +619,31 @@ void url_content_basic_auth_header(char *out, size_t len,
    if (!(b64 = base64(creds, n, &flen)))
       return;
    snprintf(out, len, "Authorization: Basic %s\r\n", b64);
+   memset(b64, 0, (size_t)flen);
+   memset(creds, 0, sizeof(creds));
    free(b64);
+}
+
+bool url_content_host_is_archive(const char *host)
+{
+   char   low[256];
+   size_t i;
+   if (!host || !*host)
+      return false;
+   strlcpy(low, host, sizeof(low));
+   for (i = 0; low[i]; i++)
+      if (low[i] >= 'A' && low[i] <= 'Z')
+         low[i] = (char)(low[i] - 'A' + 'a');
+   return uc_host_is(low, "archive.org");
+}
+
+void url_content_archive_auth_header(char *out, size_t len,
+      const char *access, const char *secret)
+{
+   if (!len)
+      return;
+   snprintf(out, len, "Authorization: LOW %s:%s\r\n",
+         access ? access : "", secret ? secret : "");
 }
 
 static void uc_md5_add(MD5_CTX *ctx, const char *s, bool colon)

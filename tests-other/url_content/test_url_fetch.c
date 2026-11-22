@@ -20,6 +20,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <time.h>
 #include <sys/stat.h>
 
 #include "../../network/url_fetch.h"
@@ -316,6 +317,100 @@ static void test_big(void)
    }
 }
 
+/* 1 if the file holds exactly text. */
+static int file_is_text(const char *path, const char *text)
+{
+   char buf[512];
+   size_t n;
+   FILE *f = fopen(path, "rb");
+   if (!f)
+      return 0;
+   n = fread(buf, 1, sizeof(buf) - 1, f);
+   fclose(f);
+   buf[n] = '\0';
+   return n == strlen(text) && !memcmp(buf, text, n);
+}
+
+static void test_redirect_auth(void)
+{
+   char cache[300], out[512];
+   enum url_fetch_result r;
+
+   /* Same host: the echo sees the login. */
+   new_cache(cache, sizeof(cache), "echo");
+   r = fetch("/echoauth", cache, "bob", "pw", out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_text(out, "auth:Basic Ym9iOnB3"));
+
+   /* 127.0.0.1 -> 127.0.0.2: no Authorization is sent. */
+   new_cache(cache, sizeof(cache), "xhost");
+   r = fetch("/xhost", cache, "bob", "pw", out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_text(out, "none"));
+
+   /* Saved logins do not cross hosts either. */
+   new_cache(cache, sizeof(cache), "xhost-saved");
+   EXPECT(url_logins_set("127.0.0.1", "bob", "pw"));
+   r = fetch("/xhost", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_text(out, "none"));
+   EXPECT(url_logins_forget_all());
+
+   /* Same-host redirect keeps the login. */
+   new_cache(cache, sizeof(cache), "samehost");
+   r = fetch("/samehost", cache, "bob", "pw", out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_game(out));
+}
+
+static void test_redirect_limits(void)
+{
+   char cache[300], out[512];
+   enum url_fetch_result r;
+
+   new_cache(cache, sizeof(cache), "loop");
+   r = fetch("/loop", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_FAILED);
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+
+   new_cache(cache, sizeof(cache), "chain10");
+   r = fetch("/chain/10", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_game(out));
+
+   new_cache(cache, sizeof(cache), "chain11");
+   r = fetch("/chain/11", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_FAILED);
+
+   new_cache(cache, sizeof(cache), "rel");
+   r = fetch("/rel/a", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_game(out));
+   EXPECT(ends_with(out, "_a"));
+}
+
+static void test_empty(void)
+{
+   char cache[300], out[512];
+   enum url_fetch_result r;
+   new_cache(cache, sizeof(cache), "empty");
+   r = fetch("/empty", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_FAILED);
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+}
+
+static void test_huge(void)
+{
+   char cache[300], out[512];
+   enum url_fetch_result r;
+   time_t t0 = time(NULL);
+   new_cache(cache, sizeof(cache), "huge");
+   r = fetch("/huge", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_TOO_BIG);
+   EXPECT(time(NULL) - t0 < 5);
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+}
+
 static void rm_tree(const char *dir)
 {
    char cmd[600];
@@ -353,6 +448,10 @@ int main(int argc, char **argv)
    test_drop();
    test_missing();
    test_big();
+   test_redirect_auth();
+   test_redirect_limits();
+   test_empty();
+   test_huge();
 
    rm_tree(g_root);
 

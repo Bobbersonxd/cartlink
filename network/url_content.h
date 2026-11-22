@@ -55,6 +55,13 @@ void url_content_host(char *out, size_t len, const char *url);
 void url_content_basic_auth_header(char *out, size_t len,
       const char *user, const char *pass);
 
+/* True for archive.org and any *.archive.org host (case-insensitive). */
+bool url_content_host_is_archive(const char *host);
+
+/* Writes "Authorization: LOW <access>:<secret>\r\n" (archive.org S3 keys). */
+void url_content_archive_auth_header(char *out, size_t len,
+      const char *access, const char *secret);
+
 /* Builds an RFC 2617 MD5 digest "Authorization: Digest ...\r\n" header
  * from a WWW-Authenticate challenge (with or without the header name).
  * Supports qop=auth and no qop, algorithm MD5 / MD5-sess.
