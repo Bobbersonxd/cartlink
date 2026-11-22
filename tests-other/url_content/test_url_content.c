@@ -15,9 +15,13 @@
 /* Unit tests for network/url_content.c (pure logic, no network). */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/stat.h>
 
 #include "../../network/url_content.h"
+#include "../../network/url_logins.h"
 
 static int g_checks   = 0;
 static int g_failures = 0;
@@ -289,6 +293,125 @@ static void test_looks_like_html(void)
    EXPECT(!url_content_looks_like_html(NULL, 0));
 }
 
+static bool file_exists(const char *path)
+{
+   struct stat st;
+   return stat(path, &st) == 0;
+}
+
+static void test_logins(void)
+{
+   char dir[]   = "/tmp/url_logins_test_XXXXXX";
+   char path[512];
+   char user[128];
+   char pass[128];
+   char access[128];
+   char secret[128];
+   char line[256];
+   struct stat st;
+   FILE *f;
+   bool saw_host_key = false;
+
+   if (!mkdtemp(dir))
+   {
+      g_checks++;
+      g_failures++;
+      printf("FAIL %s:%d: mkdtemp\n", __FILE__, __LINE__);
+      return;
+   }
+   snprintf(path, sizeof(path), "%s/url_logins.cfg", dir);
+   url_logins_set_path(path);
+
+   /* Missing file: every get is false, nothing crashes. */
+   EXPECT(!file_exists(path));
+   EXPECT(!url_logins_get("example.com", user, sizeof(user),
+         pass, sizeof(pass)));
+   EXPECT(!url_logins_get_archive_keys(access, sizeof(access),
+         secret, sizeof(secret)));
+   EXPECT(url_logins_forget_all());
+   EXPECT(!file_exists(path));
+
+   /* Round trip, two hosts. */
+   EXPECT(url_logins_set("example.com", "alice", "s3cret pass"));
+   EXPECT(url_logins_set("files.my-nas.local", "bob", "hunter2"));
+   EXPECT(file_exists(path));
+   EXPECT(stat(path, &st) == 0 && (st.st_mode & 0777) == 0600);
+
+   user[0] = pass[0] = '\0';
+   EXPECT(url_logins_get("example.com", user, sizeof(user),
+         pass, sizeof(pass)));
+   EXPECT_STR(user, "alice");
+   EXPECT_STR(pass, "s3cret pass");
+   EXPECT(url_logins_get("files.my-nas.local", user, sizeof(user),
+         pass, sizeof(pass)));
+   EXPECT_STR(user, "bob");
+   EXPECT_STR(pass, "hunter2");
+
+   /* Key format: dots become '_'. */
+   if ((f = fopen(path, "r")))
+   {
+      while (fgets(line, sizeof(line), f))
+         if (strncmp(line, "url_login_example_com_user", 26) == 0)
+            saw_host_key = true;
+      fclose(f);
+   }
+   EXPECT(saw_host_key);
+
+   /* Second set replaces the first; other host untouched. */
+   EXPECT(url_logins_set("example.com", "carol", "new"));
+   EXPECT(url_logins_get("example.com", user, sizeof(user),
+         pass, sizeof(pass)));
+   EXPECT_STR(user, "carol");
+   EXPECT_STR(pass, "new");
+   EXPECT(url_logins_get("files.my-nas.local", user, sizeof(user),
+         pass, sizeof(pass)));
+   EXPECT_STR(user, "bob");
+
+   /* Unknown host. */
+   EXPECT(!url_logins_get("unknown.org", user, sizeof(user),
+         pass, sizeof(pass)));
+
+   /* Values the file format cannot hold are refused. */
+   EXPECT(!url_logins_set("example.com", "x", "has\"quote"));
+   EXPECT(!url_logins_set("example.com", "x", "line\nbreak"));
+   EXPECT(!url_logins_set(NULL, "x", "y"));
+   EXPECT(!url_logins_set("", "x", "y"));
+   EXPECT(url_logins_get("example.com", user, sizeof(user),
+         pass, sizeof(pass)));
+   EXPECT_STR(pass, "new");
+
+   /* Archive keys round trip. */
+   EXPECT(url_logins_set_archive_keys("AKEY123", "SKEY456"));
+   access[0] = secret[0] = '\0';
+   EXPECT(url_logins_get_archive_keys(access, sizeof(access),
+         secret, sizeof(secret)));
+   EXPECT_STR(access, "AKEY123");
+   EXPECT_STR(secret, "SKEY456");
+   EXPECT(url_logins_get("example.com", user, sizeof(user),
+         pass, sizeof(pass)));
+   EXPECT_STR(user, "carol");
+   EXPECT(stat(path, &st) == 0 && (st.st_mode & 0777) == 0600);
+
+   /* Forget all: file gone, every get false. */
+   EXPECT(url_logins_forget_all());
+   EXPECT(!file_exists(path));
+   EXPECT(!url_logins_get("example.com", user, sizeof(user),
+         pass, sizeof(pass)));
+   EXPECT(!url_logins_get("files.my-nas.local", user, sizeof(user),
+         pass, sizeof(pass)));
+   EXPECT(!url_logins_get_archive_keys(access, sizeof(access),
+         secret, sizeof(secret)));
+
+   /* No path set: everything fails safely. */
+   url_logins_set_path(NULL);
+   EXPECT(!url_logins_set("example.com", "a", "b"));
+   EXPECT(!url_logins_get("example.com", user, sizeof(user),
+         pass, sizeof(pass)));
+
+   remove(path);
+   rmdir(dir);
+}
+
 int main(void)
 {
    test_fix_link();
@@ -299,6 +422,7 @@ int main(void)
    test_digest_auth();
    test_is_downloadable();
    test_looks_like_html();
+   test_logins();
 
    if (g_failures)
    {
