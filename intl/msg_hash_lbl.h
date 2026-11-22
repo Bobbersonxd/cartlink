@@ -1565,6 +1565,10 @@ MSG_HASH(
    "url_forget_logins"
    )
 MSG_HASH(
+   MENU_ENUM_LABEL_URL_CLEAR_CACHE,
+   "url_clear_cache"
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_DOWNLOAD_CORE_CONTENT,
    "download_core_content"
    )

@@ -9266,6 +9266,12 @@ unsigned menu_displaylist_build_list(
                      MENU_ENUM_LABEL_URL_FORGET_LOGINS,
                      MENU_SETTING_ACTION, 0, 0, NULL))
                count++;
+            if (menu_entries_append(list,
+                     msg_hash_to_str(MENU_ENUM_LABEL_VALUE_URL_CLEAR_CACHE),
+                     msg_hash_to_str(MENU_ENUM_LABEL_URL_CLEAR_CACHE),
+                     MENU_ENUM_LABEL_URL_CLEAR_CACHE,
+                     MENU_SETTING_ACTION, 0, 0, NULL))
+               count++;
 #endif
          }
          break;

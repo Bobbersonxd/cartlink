@@ -8465,6 +8465,13 @@ static int action_ok_url_forget_logins(const char *path,
    return 0;
 }
 
+static int action_ok_url_clear_cache(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   task_url_content_clear_cache();
+   return 0;
+}
+
 static int action_ok_load_from_url(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx)
 {
@@ -9352,6 +9359,7 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
          {MENU_ENUM_LABEL_LOAD_FROM_URL,                       action_ok_load_from_url},
          {MENU_ENUM_LABEL_URL_ARCHIVE_ACCOUNT,                 action_ok_url_archive_account},
          {MENU_ENUM_LABEL_URL_FORGET_LOGINS,                   action_ok_url_forget_logins},
+         {MENU_ENUM_LABEL_URL_CLEAR_CACHE,                     action_ok_url_clear_cache},
 #endif
          {MENU_ENUM_LABEL_DETECT_CORE_LIST_OK,                 action_ok_file_load_detect_core},
          {MENU_ENUM_LABEL_DETECT_CORE_LIST_OK_CURRENT_CORE,    action_ok_file_load_current_core},

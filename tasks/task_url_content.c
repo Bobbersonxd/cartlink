@@ -60,15 +60,27 @@
 #define URL_TASK_CRED_MAX  256
 #define URL_TASK_POLL_USEC 50000
 
+/* Lifetime: the fetch thread only ever touches this struct (never the
+ * task or the task queue). It is shared by two owners, counted in
+ * refs under lock: the task (dropped in url_task_cleanup) and the
+ * fetch thread while it runs (dropped as its very last step). The
+ * last owner frees it. Normally the handler joins the thread before
+ * the task finishes, so cleanup frees it. If RetroArch quits during a
+ * download, task_queue_deinit drops the unfinished task without
+ * calling cleanup, so the task's reference is never dropped and the
+ * struct (and its lock) stay valid for the still-running thread until
+ * the process exits. If cleanup ever runs while the thread is still
+ * going, the thread is detached and frees the struct itself. */
 typedef struct url_task_data
 {
 #ifdef HAVE_THREADS
    sthread_t *thread;
    slock_t *lock;
 #endif
-   retro_task_t *task;
    enum url_fetch_result result;
-   int last_pct;
+   int refs;                  /* owners, under lock */
+   int pct;                   /* written by the fetch thread, under lock */
+   int shown_pct;             /* task thread only */
    bool started;
    bool done;
    bool has_login;
@@ -95,20 +107,39 @@ static struct
 static bool url_task_push(const char *url,
       const char *user, const char *pass);
 
-static void url_task_wipe(char *s, size_t len)
-{
-   volatile char *p = s;
-   while (len--)
-      *p++ = '\0';
-}
-
 static void url_task_notify(const char *msg, enum message_queue_category cat)
 {
    runloop_msg_queue_push(msg, strlen(msg), 1, 240, true, NULL,
          MESSAGE_QUEUE_ICON_DEFAULT, cat);
 }
 
-/* Called on the fetch thread. */
+static void url_task_data_free(url_task_data_t *d)
+{
+   url_content_wipe(d->user, sizeof(d->user));
+   url_content_wipe(d->pass, sizeof(d->pass));
+#ifdef HAVE_THREADS
+   slock_free(d->lock);
+#endif
+   free(d);
+}
+
+/* Drops one owner's reference; the last one frees d. */
+static void url_task_data_release(url_task_data_t *d)
+{
+   int left;
+#ifdef HAVE_THREADS
+   slock_lock(d->lock);
+#endif
+   left = --d->refs;
+#ifdef HAVE_THREADS
+   slock_unlock(d->lock);
+#endif
+   if (left <= 0)
+      url_task_data_free(d);
+}
+
+/* Called on the fetch thread: only stores the percentage in d. The
+ * task handler hands it to the task queue. */
 static void url_task_progress_cb(size_t done, size_t total, void *ud)
 {
    url_task_data_t *d = (url_task_data_t*)ud;
@@ -120,18 +151,18 @@ static void url_task_progress_cb(size_t done, size_t total, void *ud)
       pct = 100;
    else
       pct = (int)(((double)done * 100.0) / (double)total);
-   if (pct != d->last_pct)
-   {
-      d->last_pct = pct;
-      task_set_progress(d->task, (int8_t)pct);
-   }
+#ifdef HAVE_THREADS
+   slock_lock(d->lock);
+#endif
+   d->pct = pct;
+#ifdef HAVE_THREADS
+   slock_unlock(d->lock);
+#endif
 }
 
-/* Called on the fetch thread (or the task thread without threads). */
-static void url_task_fetch(void *ud)
+/* The download itself. Touches only d. */
+static void url_task_fetch(url_task_data_t *d)
 {
-   url_task_data_t *d = (url_task_data_t*)ud;
-
    d->result = url_fetch_to_cache(d->url, d->cache_dir,
          d->has_login ? d->user : NULL,
          d->has_login ? d->pass : NULL,
@@ -139,7 +170,6 @@ static void url_task_fetch(void *ud)
          d->challenge, sizeof(d->challenge),
          d->err, sizeof(d->err),
          url_task_progress_cb, d);
-
 #ifdef HAVE_THREADS
    slock_lock(d->lock);
 #endif
@@ -148,6 +178,17 @@ static void url_task_fetch(void *ud)
    slock_unlock(d->lock);
 #endif
 }
+
+#ifdef HAVE_THREADS
+/* Fetch thread entry: the download, then drop the thread's reference
+ * (the last thing this thread does with d). */
+static void url_task_fetch_thread(void *ud)
+{
+   url_task_data_t *d = (url_task_data_t*)ud;
+   url_task_fetch(d);
+   url_task_data_release(d);
+}
+#endif
 
 /* Replaces the task title with a final message, so the normal task
  * notification shows it. Error tasks show as failed. */
@@ -170,7 +211,17 @@ static void url_task_handler(retro_task_t *task)
       d->started = true;
 #ifdef HAVE_THREADS
       if (d->lock)
-         d->thread = sthread_create(url_task_fetch, d);
+      {
+         slock_lock(d->lock);
+         d->refs++;             /* the thread's reference */
+         slock_unlock(d->lock);
+         if (!(d->thread = sthread_create(url_task_fetch_thread, d)))
+         {
+            slock_lock(d->lock);
+            d->refs--;
+            slock_unlock(d->lock);
+         }
+      }
       if (d->thread)
       {
          task->when = cpu_features_get_time_usec() + URL_TASK_POLL_USEC;
@@ -184,9 +235,18 @@ static void url_task_handler(retro_task_t *task)
    if (d->thread)
    {
       bool done;
+      int pct;
       slock_lock(d->lock);
       done = d->done;
+      pct  = d->pct;
       slock_unlock(d->lock);
+      /* Progress goes to the task queue from here, never from the
+       * fetch thread. */
+      if (pct != d->shown_pct)
+      {
+         d->shown_pct = pct;
+         task_set_progress(task, (int8_t)pct);
+      }
       if (!done)
       {
          task->when = cpu_features_get_time_usec() + URL_TASK_POLL_USEC;
@@ -252,7 +312,7 @@ static void url_task_pass_cb(void *userdata, const char *line)
    if (!line)
    {
       menu_input_dialog_end();
-      url_task_wipe(url_task_st.user, sizeof(url_task_st.user));
+      url_content_wipe(url_task_st.user, sizeof(url_task_st.user));
       return;
    }
 
@@ -260,8 +320,8 @@ static void url_task_pass_cb(void *userdata, const char *line)
 
    /* The line is the dialog's own heap buffer; clear the password
     * before the input code frees it. */
-   url_task_wipe((char*)line, strlen(line));
-   url_task_wipe(url_task_st.user, sizeof(url_task_st.user));
+   url_content_wipe((char*)line, strlen(line));
+   url_content_wipe(url_task_st.user, sizeof(url_task_st.user));
    menu_input_dialog_end();
 }
 
@@ -376,13 +436,17 @@ static void url_task_cleanup(retro_task_t *task)
 
    if (!d)
       return;
-   url_task_wipe(d->user, sizeof(d->user));
-   url_task_wipe(d->pass, sizeof(d->pass));
-#ifdef HAVE_THREADS
-   slock_free(d->lock);
-#endif
-   free(d);
    task->task_data = NULL;
+#ifdef HAVE_THREADS
+   /* Not joined yet (should not happen: the handler joins before it
+    * finishes): let the thread run on and free d itself. */
+   if (d->thread)
+   {
+      sthread_detach(d->thread);
+      d->thread = NULL;
+   }
+#endif
+   url_task_data_release(d);
 }
 
 static bool url_task_cache_dir(char *out, size_t len)
@@ -438,7 +502,9 @@ static bool url_task_push(const char *url,
    /* Same host url_fetch uses for saved logins. */
    url_content_fix_link(fixed, sizeof(fixed), url);
    url_content_host(d->host, sizeof(d->host), fixed);
-   d->last_pct = -1;
+   d->refs      = 1;   /* the task's reference */
+   d->pct       = -1;
+   d->shown_pct = -1;
    if (!string_is_empty(user))
    {
       d->has_login = true;
@@ -453,7 +519,7 @@ static bool url_task_push(const char *url,
 
    if (!(task = task_init()))
    {
-      url_task_wipe(d->pass, sizeof(d->pass));
+      url_content_wipe(d->pass, sizeof(d->pass));
 #ifdef HAVE_THREADS
       slock_free(d->lock);
 #endif
@@ -469,7 +535,6 @@ static bool url_task_push(const char *url,
    snprintf(title, sizeof(title),
          msg_hash_to_str(MSG_URL_CONTENT_DOWNLOADING), shown);
 
-   d->task         = task;
    task->handler   = url_task_handler;
    task->callback  = url_task_callback;
    task->cleanup   = url_task_cleanup;
@@ -493,6 +558,30 @@ static bool url_task_push(const char *url,
 bool task_push_url_content_load(const char *url)
 {
    return url_task_push(url, NULL, NULL);
+}
+
+void task_url_content_clear_cache(void)
+{
+   char cache_dir[PATH_MAX_LENGTH];
+   unsigned removed = 0;
+
+   /* A running download may be writing into the folder. */
+   if (url_task_st.busy)
+   {
+      url_task_notify(msg_hash_to_str(MSG_URL_CONTENT_BUSY),
+            MESSAGE_QUEUE_CATEGORY_WARNING);
+      return;
+   }
+   if (     !url_task_cache_dir(cache_dir, sizeof(cache_dir))
+         || !url_fetch_clear_cache(cache_dir, &removed))
+   {
+      url_task_notify(msg_hash_to_str(MSG_URL_CACHE_CLEAR_FAILED),
+            MESSAGE_QUEUE_CATEGORY_ERROR);
+      return;
+   }
+   RARCH_LOG("[URL] Cache cleared: %u file(s) removed.\n", removed);
+   url_task_notify(msg_hash_to_str(MSG_URL_CACHE_CLEARED),
+         MESSAGE_QUEUE_CATEGORY_INFO);
 }
 
 /* ---------- command line ---------- */
@@ -624,9 +713,9 @@ static void url_archive_task_run(void *ud)
          d->err, sizeof(d->err));
 
    /* Not needed any more: the keys are saved, the password never is. */
-   url_task_wipe(d->pass, sizeof(d->pass));
-   url_task_wipe(d->access, sizeof(d->access));
-   url_task_wipe(d->secret, sizeof(d->secret));
+   url_content_wipe(d->pass, sizeof(d->pass));
+   url_content_wipe(d->access, sizeof(d->access));
+   url_content_wipe(d->secret, sizeof(d->secret));
 
 #ifdef HAVE_THREADS
    slock_lock(d->lock);
@@ -706,9 +795,9 @@ static void url_archive_task_cleanup(retro_task_t *task)
 
    if (!d)
       return;
-   url_task_wipe(d->pass, sizeof(d->pass));
-   url_task_wipe(d->access, sizeof(d->access));
-   url_task_wipe(d->secret, sizeof(d->secret));
+   url_content_wipe(d->pass, sizeof(d->pass));
+   url_content_wipe(d->access, sizeof(d->access));
+   url_content_wipe(d->secret, sizeof(d->secret));
 #ifdef HAVE_THREADS
    slock_free(d->lock);
 #endif
@@ -740,7 +829,7 @@ static bool url_archive_task_push(const char *email, const char *pass)
 
    if (!(task = task_init()))
    {
-      url_task_wipe(d->pass, sizeof(d->pass));
+      url_content_wipe(d->pass, sizeof(d->pass));
 #ifdef HAVE_THREADS
       slock_free(d->lock);
 #endif
@@ -774,9 +863,9 @@ static void url_archive_pass_cb(void *userdata, const char *line)
       url_archive_task_push(url_archive_st.email, line);
       /* The dialog's own buffer: clear it before the input code frees
        * it. */
-      url_task_wipe((char*)line, strlen(line));
+      url_content_wipe((char*)line, strlen(line));
    }
-   url_task_wipe(url_archive_st.email, sizeof(url_archive_st.email));
+   url_content_wipe(url_archive_st.email, sizeof(url_archive_st.email));
    menu_input_dialog_end();
 }
 

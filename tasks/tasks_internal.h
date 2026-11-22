@@ -122,6 +122,10 @@ bool task_url_content_fetch_cli(const char *url,
  * background thread and saves the account's S3 keys. */
 void task_url_archive_login_prompt(void);
 
+/* Menu: deletes the downloaded files in the url_cache folder (nothing
+ * else) and shows a notification. Refused while a link downloads. */
+void task_url_content_clear_cache(void);
+
 /* Core updater tasks */
 
 void *task_push_get_core_updater_list(

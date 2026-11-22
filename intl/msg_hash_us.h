@@ -325,7 +325,7 @@ MSG_HASH(
    )
 MSG_HASH(
    MENU_ENUM_SUBLABEL_URL_ARCHIVE_ACCOUNT,
-   "Sign in to archive.org so Load from URL can download items that need an account. Only the account's access keys are saved, never the password."
+   "Sign in so Load from URL can download archive.org items that need an account. Saves archive.org access keys (not your password). Anyone with these keys can use your archive.org account. Use Forget Saved Logins on shared computers."
    )
 MSG_HASH(
    MENU_ENUM_LABEL_VALUE_URL_FORGET_LOGINS,
@@ -334,6 +334,14 @@ MSG_HASH(
 MSG_HASH(
    MENU_ENUM_SUBLABEL_URL_FORGET_LOGINS,
    "Delete every username, password and archive.org key saved by Load from URL."
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_URL_CLEAR_CACHE,
+   "Clear URL Cache"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_URL_CLEAR_CACHE,
+   "Delete downloaded games so links download again. Use this if a friend's copy doesn't match yours."
    )
 MSG_HASH(
    MSG_URL_ARCHIVE_EMAIL_PROMPT,
@@ -362,6 +370,14 @@ MSG_HASH(
 MSG_HASH(
    MSG_URL_LOGINS_FORGET_FAILED,
    "Could not remove the saved logins file"
+   )
+MSG_HASH(
+   MSG_URL_CACHE_CLEARED,
+   "URL cache cleared"
+   )
+MSG_HASH(
+   MSG_URL_CACHE_CLEAR_FAILED,
+   "Could not clear the URL cache"
    )
 MSG_HASH(
    MENU_ENUM_LABEL_VALUE_OPEN_ARCHIVE,
