@@ -519,6 +519,15 @@ static int is_dir(const char *path)
    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
+static void make_dir(const char *path)
+{
+#ifdef _WIN32
+   mkdir(path);
+#else
+   mkdir(path, 0700);
+#endif
+}
+
 static void touch(const char *path)
 {
    FILE *f = fopen(path, "wb");
@@ -547,7 +556,7 @@ static void test_clear_cache(void)
    snprintf(keep_file, sizeof(keep_file), "%s/notes.txt", cache);
    touch(keep_file);
    snprintf(keep_dir, sizeof(keep_dir), "%s/0123456789abcdef_dir", cache);
-   mkdir(keep_dir, 0700);
+   make_dir(keep_dir);
    snprintf(p, sizeof(p), "%s/inner.bin", keep_dir);
    touch(p);
 

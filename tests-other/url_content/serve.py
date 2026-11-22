@@ -23,7 +23,7 @@ BIG = 300 * 1024 * 1024
 HUGE = 3 * 1024 * 1024 * 1024
 LOGIN_POSTS = 0   # POSTs that reached /xauthn/?op=login
 AUTH_LOG = []     # Authorization scheme of each /basic/ and /digest/ GET
-SLOW = 64 * 1024 * 1024
+SLOW = 16 * 1024 * 1024
 
 
 def md5(s):
@@ -241,7 +241,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.flush()
             self.close_connection = True
         elif path == "/slow":
-            # 64 MiB at about 640 KiB/s: still running when a test quits.
+            # 16 MiB in about 10 s: still running when a test quits, and
+            # the progress percentage changes every ~0.1 s.
             self.send_response(200)
             self.send_header("Content-Type", "application/octet-stream")
             self.send_header("Content-Length", str(SLOW))
@@ -254,7 +255,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self.wfile.write(chunk)
                     self.wfile.flush()
                     left -= len(chunk)
-                    time.sleep(0.1)
+                    time.sleep(0.04)
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
         elif path == "/big":
