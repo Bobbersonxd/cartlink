@@ -1274,7 +1274,26 @@ static ssize_t net_http_receive_header(struct http_t *state, ssize_t len)
                ++ptr;
 
             response->bodytype = T_LEN;
-            response->len      = strtol(ptr, NULL, 10);
+            if (ISDIGIT(*ptr))
+            {
+               /* Parse into size_t: strtol stops at LONG_MAX, which
+                * is 2 GiB - 1 where long is 32 bits (Windows), so a
+                * bigger body would slip past max_body. Saturates. */
+               size_t n = 0;
+               for (; ISDIGIT(*ptr); ptr++)
+               {
+                  size_t d = (size_t)(*ptr - '0');
+                  if (n > ((size_t)-1 - d) / 10)
+                  {
+                     n = (size_t)-1;
+                     break;
+                  }
+                  n = n * 10 + d;
+               }
+               response->len = n;
+            }
+            else
+               response->len = strtol(ptr, NULL, 10);
          }
          else if (string_is_equal_case_insensitive(response->data, "Transfer-Encoding: chunked"))
             response->bodytype = T_CHUNK;
