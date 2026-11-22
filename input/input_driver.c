@@ -57,6 +57,7 @@
 #include "../configuration.h"
 #include "../core_info.h"
 #include "../driver.h"
+#include "../frontend/clipboard.h"
 #include "../frontend/frontend_driver.h"
 #include "../list_special.h"
 #include "../paths.h"
@@ -1135,6 +1136,20 @@ static int16_t input_joypad_analog_axis(
    return res;
 }
 
+/* Left Ctrl is also the on-screen keyboard's OK key in a text
+ * input dialog, so pressing it before V types the highlighted key.
+ * The line length at the Left Ctrl press is kept here (size, valid),
+ * and Ctrl+V takes back what was added since, before it pastes.
+ * After a paste, Left Ctrl stops acting as OK until the menu input
+ * sees it released (no_ok), so letting go of V does not type a key
+ * either. */
+static struct
+{
+   size_t size;
+   bool   valid;
+   bool   no_ok;
+} input_keyboard_paste_undo;
+
 void input_keyboard_line_append(
       struct input_keyboard_line *keyboard_line,
       const char *word, size_t len)
@@ -1165,6 +1180,7 @@ void input_keyboard_line_append(
 
 void input_keyboard_line_clear(input_driver_state_t *input_st)
 {
+   input_keyboard_paste_undo.valid      = false;
    if (input_st->keyboard_line.buffer)
       free(input_st->keyboard_line.buffer);
    input_st->keyboard_line.buffer       = NULL;
@@ -1174,6 +1190,7 @@ void input_keyboard_line_clear(input_driver_state_t *input_st)
 
 void input_keyboard_line_free(input_driver_state_t *input_st)
 {
+   input_keyboard_paste_undo.valid      = false;
    if (input_st->keyboard_line.buffer)
       free(input_st->keyboard_line.buffer);
    input_st->keyboard_line.buffer       = NULL;
@@ -1195,6 +1212,8 @@ const char **input_keyboard_start_line(
    keyboard_line->cb        = cb;
    keyboard_line->userdata  = userdata;
    keyboard_line->enabled   = true;
+   input_keyboard_paste_undo.valid = false;
+   input_keyboard_paste_undo.no_ok = false;
 
    return (const char**)&keyboard_line->buffer;
 }
@@ -7017,7 +7036,25 @@ void input_driver_collect_system_input(input_driver_state_t *input_st,
                      (input_st->flags & INP_FLAG_KB_MAPPING_BLOCKED) ? true : false,
                      0,
                      RETRO_DEVICE_KEYBOARD, 0, ids[i][0]))
+            {
+               /* Left Ctrl+V pastes (input_keyboard_event):
+                * no OK press then. */
+               if (     ids[i][0] == RETROK_LCTRL
+                     && (input_keyboard_paste_undo.no_ok
+                     ||  current_input->input_state(
+                        input_st->current_data,
+                        joypad,
+                        sec_joypad,
+                        &joypad_info,
+                        (const retro_keybind_set *)input_config_binds,
+                        (input_st->flags & INP_FLAG_KB_MAPPING_BLOCKED) ? true : false,
+                        0,
+                        RETRO_DEVICE_KEYBOARD, 0, RETROK_v)))
+                  continue;
                BIT256_SET_PTR(current_bits, ids[i][1]);
+            }
+            else if (ids[i][0] == RETROK_LCTRL)
+               input_keyboard_paste_undo.no_ok = false;
          }
       }
    }
@@ -7116,6 +7153,68 @@ static const char *accessibility_lut_name(char key)
    return NULL;
 }
 #endif
+
+/* Longest clipboard text pasted into a text input dialog. */
+#define INPUT_KEYBOARD_PASTE_MAX 4096
+
+/* Ctrl+V or Shift+Insert (with no Alt/Meta, so AltGr
+ * combinations still type their characters). */
+static bool input_keyboard_is_paste(unsigned code, uint16_t mod)
+{
+   if (mod & (RETROKMOD_ALT | RETROKMOD_META))
+      return false;
+   if (code == RETROK_v)
+      return (mod & RETROKMOD_CTRL) != 0;
+   if (code == RETROK_INSERT)
+      return (mod & RETROKMOD_SHIFT) && !(mod & RETROKMOD_CTRL);
+   return false;
+}
+
+/* Inserts the clipboard text (one line, trimmed) at the cursor
+ * of the open text input dialog. Does nothing without text. */
+static void input_keyboard_line_paste(input_driver_state_t *input_st,
+      uint16_t mod)
+{
+   input_keyboard_line_t *line = &input_st->keyboard_line;
+   char *text;
+
+   /* Take back an on-screen key typed by Left Ctrl (see
+    * input_keyboard_paste_undo), when the cursor is still at the
+    * end and the line only grew. */
+   if (     input_keyboard_paste_undo.valid
+         && (mod & RETROKMOD_CTRL)
+         && line->buffer
+         && line->ptr == line->size
+         && line->size >  input_keyboard_paste_undo.size)
+   {
+      line->size                 = input_keyboard_paste_undo.size;
+      line->ptr                  = line->size;
+      line->buffer[line->size]   = '\0';
+      osk_update_last_codepoint(
+            &input_st->osk_last_codepoint,
+            &input_st->osk_last_codepoint_len,
+            line->buffer);
+   }
+   /* Left Ctrl was the last key down: it is the Ctrl held now. */
+   if (input_keyboard_paste_undo.valid && (mod & RETROKMOD_CTRL))
+      input_keyboard_paste_undo.no_ok = true;
+   input_keyboard_paste_undo.valid = false;
+
+   if (!(text = (char*)malloc(INPUT_KEYBOARD_PASTE_MAX)))
+      return;
+
+   if (     frontend_clipboard_get_text(text, INPUT_KEYBOARD_PASTE_MAX)
+         && *text)
+   {
+      input_keyboard_line_append(line, text, strlen(text));
+      osk_update_last_codepoint(
+            &input_st->osk_last_codepoint,
+            &input_st->osk_last_codepoint_len,
+            text);
+   }
+
+   free(text);
+}
 
 void input_keyboard_event(bool down, unsigned code,
       uint32_t character, uint16_t mod, unsigned device)
@@ -7245,7 +7344,25 @@ void input_keyboard_event(bool down, unsigned code,
    else if (input_st->keyboard_line.enabled)
    {
       if (!down)
+      {
+         if (code == RETROK_LCTRL)
+            input_keyboard_paste_undo.valid = false;
          return;
+      }
+
+      if (input_keyboard_is_paste(code, mod))
+      {
+         input_keyboard_line_paste(input_st, mod);
+         return;
+      }
+
+      if (code == RETROK_LCTRL)
+      {
+         input_keyboard_paste_undo.size  = input_st->keyboard_line.size;
+         input_keyboard_paste_undo.valid = true;
+      }
+      else if (code != RETROK_UNKNOWN)
+         input_keyboard_paste_undo.valid = false;
 
       if (!input_keyboard_line_event(input_st,
             &input_st->keyboard_line, character))

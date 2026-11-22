@@ -237,6 +237,7 @@ ifeq ($(HAVE_DR_MP3), 1)
 endif
 
 OBJ += frontend/frontend_driver.o \
+       frontend/clipboard.o \
        retroarch.o \
        runloop.o \
        ui/ui_companion_driver.o \

@@ -1121,6 +1121,7 @@ FRONTEND
 ============================================================ */
 
 #include "../frontend/frontend_driver.c"
+#include "../frontend/clipboard.c"
 
 #if defined(_WIN32) && !defined(_XBOX) && !defined(__WINRT__)
 #include "../frontend/drivers/platform_win32.c"

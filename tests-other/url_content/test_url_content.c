@@ -22,6 +22,7 @@
 
 #include "../../network/url_content.h"
 #include "../../network/url_logins.h"
+#include "../../frontend/clipboard.h"
 
 static int g_checks   = 0;
 static int g_failures = 0;
@@ -589,6 +590,38 @@ static void test_cli_should_fetch(void)
    EXPECT(!url_content_cli_should_fetch(true, "http://h/stream", "", true));
 }
 
+static void test_clipboard_clean(void)
+{
+   char s[64];
+
+   strlcpy(s, "  https://a/b.zip\r\n", sizeof(s));
+   clipboard_clean_text(s);
+   EXPECT_STR(s, "https://a/b.zip");
+
+   /* Line breaks inside are dropped too (a link wrapped by a mail app). */
+   strlcpy(s, "\thttps://a/\r\nlong.zip \n", sizeof(s));
+   clipboard_clean_text(s);
+   EXPECT_STR(s, "https://a/long.zip");
+
+   /* Other control bytes go; inner spaces and UTF-8 stay. */
+   strlcpy(s, "a\x01" "b c \xc3\xa9", sizeof(s));
+   clipboard_clean_text(s);
+   EXPECT_STR(s, "ab c \xc3\xa9");
+
+   strlcpy(s, " \r\n\t ", sizeof(s));
+   clipboard_clean_text(s);
+   EXPECT_STR(s, "");
+
+   s[0] = '\0';
+   clipboard_clean_text(s);
+   EXPECT_STR(s, "");
+   clipboard_clean_text(NULL);
+
+   strlcpy(s, "plain", sizeof(s));
+   clipboard_clean_text(s);
+   EXPECT_STR(s, "plain");
+}
+
 int main(void)
 {
    test_fix_link();
@@ -604,6 +637,7 @@ int main(void)
    test_form_encode();
    test_archive_login_parse();
    test_cli_should_fetch();
+   test_clipboard_clean();
 
    if (g_failures)
    {
