@@ -107,6 +107,11 @@ bool task_push_netplay_content_reload(const char *hostname);
 bool task_push_netplay_nat_traversal(void *data, uint16_t port);
 bool task_push_netplay_nat_close(void *data);
 
+/* "Load from URL": downloads url into the url_cache folder on a
+ * background thread, asks for a login on 401, then loads the file
+ * like the file browser does. False if a download is already running. */
+bool task_push_url_content_load(const char *url);
+
 /* Core updater tasks */
 
 void *task_push_get_core_updater_list(

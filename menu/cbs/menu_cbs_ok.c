@@ -1985,7 +1985,7 @@ static int file_load_with_detect_core_wrapper(
       enum msg_hash_enums enum_label_idx,
       size_t idx, size_t entry_idx,
       const char *path, const char *label,
-      unsigned type, bool is_carchive)
+      unsigned type, bool is_carchive, const char *dir_override)
 {
    int ret                             = 0;
    struct menu_state *menu_st          = menu_state_get_ptr();
@@ -2045,6 +2045,11 @@ static int file_load_with_detect_core_wrapper(
             fill_pathname_join_special(menu_path_new,
                   menu->scratch2_buf, menu->scratch_buf, sizeof(menu_path_new));
       }
+
+      /* Content not taken from the menu's current folder
+       * (e.g. a file downloaded by "Load from URL") */
+      if (dir_override)
+         strlcpy(menu_path_new, dir_override, sizeof(menu_path_new));
 
       core_info_get_list(&list);
 
@@ -2141,7 +2146,7 @@ static int action_ok_file_load_with_detect_core_carchive(
 
    return file_load_with_detect_core_wrapper(
          MSG_UNKNOWN, idx, entry_idx,
-         path, label, type, true);
+         path, label, type, true, NULL);
 }
 
 static int action_ok_file_load_with_detect_core(const char *path,
@@ -2157,7 +2162,7 @@ static int action_ok_file_load_with_detect_core(const char *path,
    label       = NULL;
    return file_load_with_detect_core_wrapper(
          MSG_UNKNOWN, idx, entry_idx,
-         path, label, type, false);
+         path, label, type, false, NULL);
 }
 
 static int action_ok_file_load_with_detect_core_collection(const char *path,
@@ -2169,7 +2174,7 @@ static int action_ok_file_load_with_detect_core_collection(const char *path,
    return file_load_with_detect_core_wrapper(
          MENU_ENUM_LABEL_COLLECTION,
          idx, entry_idx,
-         path, label, type, false);
+         path, label, type, false, NULL);
 }
 
 static int set_path_generic(const char *label, const char *action_path)
@@ -8414,6 +8419,47 @@ static int action_ok_netplay_disconnect(const char *path,
 
    return generic_action_ok_command(CMD_EVENT_RESUME);
 }
+
+int action_ok_url_content_load_file(const char *dir, const char *name)
+{
+   struct menu_state *menu_st = menu_state_get_ptr();
+
+   if (string_is_empty(dir) || string_is_empty(name))
+      return -1;
+
+   return file_load_with_detect_core_wrapper(
+         MSG_UNKNOWN, menu_st->selection_ptr, 0,
+         name, NULL, 0, false, dir);
+}
+
+static void action_ok_load_from_url_cb(void *userdata, const char *line)
+{
+   if (!string_is_empty(line))
+   {
+      char url[4096];
+      /* Copy first: the dialog frees its buffer when it ends. */
+      strlcpy(url, line, sizeof(url));
+      menu_input_dialog_end();
+      task_push_url_content_load(url);
+   }
+   else
+      menu_input_dialog_end();
+}
+
+static int action_ok_load_from_url(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   menu_input_ctx_line_t line = {0};
+
+   line.label         = msg_hash_to_str(MSG_URL_CONTENT_LINK_PROMPT);
+   line.label_setting = "no_setting";
+   line.cb            = action_ok_load_from_url_cb;
+
+   if (menu_input_dialog_start(&line))
+      return 0;
+
+   return -1;
+}
 #endif
 
 static int action_ok_core_create_backup(const char *path,
@@ -9283,6 +9329,9 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
          {MENU_ENUM_LABEL_FAVORITES,                           action_ok_push_content_list},
          {MENU_ENUM_LABEL_FILE_DETECT_CORE_LIST_PUSH_DIR,      action_ok_push_random_dir},
          {MENU_ENUM_LABEL_DOWNLOADED_FILE_DETECT_CORE_LIST,    action_ok_push_downloads_dir},
+#ifdef HAVE_NETWORKING
+         {MENU_ENUM_LABEL_LOAD_FROM_URL,                       action_ok_load_from_url},
+#endif
          {MENU_ENUM_LABEL_DETECT_CORE_LIST_OK,                 action_ok_file_load_detect_core},
          {MENU_ENUM_LABEL_DETECT_CORE_LIST_OK_CURRENT_CORE,    action_ok_file_load_current_core},
          {MENU_ENUM_LABEL_LOAD_CONTENT_HISTORY,                action_ok_push_generic_list},

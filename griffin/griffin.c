@@ -1276,6 +1276,10 @@ NETPLAY
 #include "../tasks/task_bluetooth.c"
 #endif
 #include "../tasks/task_netplay_find_content.c"
+#include "../network/url_content.c"
+#include "../network/url_logins.c"
+#include "../network/url_fetch.c"
+#include "../tasks/task_url_content.c"
 #include "../tasks/task_pl_thumbnail_download.c"
 #endif
 

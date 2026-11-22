@@ -272,6 +272,50 @@ MSG_HASH(
    "Downloads"
    )
 MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_LOAD_FROM_URL,
+   "Load from URL"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_LOAD_FROM_URL,
+   "Download a game from a web link and load it. Links to Google Drive, Dropbox, OneDrive and archive.org work."
+   )
+MSG_HASH(
+   MSG_URL_CONTENT_LINK_PROMPT,
+   "Game link (URL)"
+   )
+MSG_HASH(
+   MSG_URL_CONTENT_USERNAME_FOR,
+   "Username for %s"
+   )
+MSG_HASH(
+   MSG_URL_CONTENT_PASSWORD_FOR,
+   "Password for %s"
+   )
+MSG_HASH(
+   MSG_URL_CONTENT_DOWNLOADING,
+   "Downloading %s"
+   )
+MSG_HASH(
+   MSG_URL_CONTENT_NOT_A_FILE,
+   "That link gave a web page, not a game file. Check that it's a direct, public link."
+   )
+MSG_HASH(
+   MSG_URL_CONTENT_LOGIN_FAILED,
+   "Wrong username or password for %s"
+   )
+MSG_HASH(
+   MSG_URL_CONTENT_LOGIN_NEEDED,
+   "Login needed for %s"
+   )
+MSG_HASH(
+   MSG_URL_CONTENT_BUSY,
+   "A link is already downloading."
+   )
+MSG_HASH(
+   MSG_URL_CONTENT_FAILED,
+   "Download failed"
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_VALUE_OPEN_ARCHIVE,
    "Browse Archive"
    )

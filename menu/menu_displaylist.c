@@ -8201,6 +8201,15 @@ unsigned menu_displaylist_build_list(
                      MENU_SETTING_ACTION, 0, 0, NULL))
                count++;
 
+#ifdef HAVE_NETWORKING
+         if (menu_entries_append(list,
+                  msg_hash_to_str(MENU_ENUM_LABEL_VALUE_LOAD_FROM_URL),
+                  msg_hash_to_str(MENU_ENUM_LABEL_LOAD_FROM_URL),
+                  MENU_ENUM_LABEL_LOAD_FROM_URL,
+                  MENU_SETTING_ACTION, 0, 0, NULL))
+            count++;
+#endif
+
          if (     !settings->bools.kiosk_mode_enable
                && frontend_driver_parse_drive_list(list, true) != 0)
             if (menu_entries_append(list, "/",

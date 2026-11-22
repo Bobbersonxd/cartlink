@@ -2304,7 +2304,11 @@ ifeq ($(HAVE_NETWORKING), 1)
           network/natt.o \
           tasks/task_netplay_lan_scan.o \
           tasks/task_netplay_nat_traversal.o \
-          tasks/task_netplay_find_content.o
+          tasks/task_netplay_find_content.o \
+          network/url_content.o \
+          network/url_logins.o \
+          network/url_fetch.o \
+          tasks/task_url_content.o
 
    ifeq ($(HAVE_EMSCRIPTEN), 1)
      OBJ += tasks/task_http_emscripten.o

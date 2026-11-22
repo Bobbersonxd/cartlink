@@ -269,6 +269,12 @@ int generic_action_cheat_toggle(size_t idx, unsigned type, const char *label,
 int action_ok_path_use_directory(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx);
 
+#ifdef HAVE_NETWORKING
+/* "Load from URL": loads dir/name the way the file browser loads a
+ * file (core detection, core choice list, history). Main thread only. */
+int action_ok_url_content_load_file(const char *dir, const char *name);
+#endif
+
 void input_keyboard_mapping_bits(unsigned mode, unsigned key);
 
 unsigned libretro_device_get_size(unsigned *devices, size_t devices_size, unsigned port);

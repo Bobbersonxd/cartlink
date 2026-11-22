@@ -1553,6 +1553,10 @@ MSG_HASH(
    "downloaded_file_detect_core_list"
    )
 MSG_HASH(
+   MENU_ENUM_LABEL_LOAD_FROM_URL,
+   "load_from_url"
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_DOWNLOAD_CORE_CONTENT,
    "download_core_content"
    )

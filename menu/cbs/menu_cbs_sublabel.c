@@ -927,6 +927,7 @@ DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_input_overlay_mouse_dtap_msec,      
 DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_input_overlay_mouse_swipe_threshold,      MENU_ENUM_SUBLABEL_INPUT_OVERLAY_MOUSE_SWIPE_THRESHOLD)
 DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_netplay_public_announce,       MENU_ENUM_SUBLABEL_NETPLAY_PUBLIC_ANNOUNCE)
 DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_netplay_ip_address,            MENU_ENUM_SUBLABEL_NETPLAY_IP_ADDRESS)
+DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_load_from_url,               MENU_ENUM_SUBLABEL_LOAD_FROM_URL)
 DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_netplay_tcp_udp_port,          MENU_ENUM_SUBLABEL_NETPLAY_TCP_UDP_PORT)
 DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_netplay_max_connections,       MENU_ENUM_SUBLABEL_NETPLAY_MAX_CONNECTIONS)
 DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_netplay_max_ping,              MENU_ENUM_SUBLABEL_NETPLAY_MAX_PING)
@@ -3880,6 +3881,9 @@ int menu_cbs_init_bind_sublabel(menu_file_list_cbs_t *cbs,
             break;
          case MENU_ENUM_LABEL_NETPLAY_IP_ADDRESS:
             BIND_ACTION_SUBLABEL(cbs, action_bind_sublabel_netplay_ip_address);
+            break;
+         case MENU_ENUM_LABEL_LOAD_FROM_URL:
+            BIND_ACTION_SUBLABEL(cbs, action_bind_sublabel_load_from_url);
             break;
          case MENU_ENUM_LABEL_OVERLAY_AUTOLOAD_PREFERRED:
             BIND_ACTION_SUBLABEL(cbs, action_bind_sublabel_overlay_autoload_preferred);
