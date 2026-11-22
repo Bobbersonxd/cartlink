@@ -67,6 +67,7 @@ struct conn_pool_entry
    bool ssl;
    bool connected;
    bool in_use;
+   bool verified;     /* TLS certificate was checked (verify_tls) */
    struct conn_pool_entry *next;
 };
 
@@ -111,6 +112,8 @@ struct http_t
    bool too_big;      /* body over max_body, or a buffer could not grow */
    bool no_redirect;  /* return 3xx responses instead of following them */
    size_t max_body;   /* 0 = no limit */
+   bool verify_tls;   /* opt-in: TLS certificate must verify */
+   int tls_error;     /* enum net_http_tls_error */
 
    struct conn_pool_entry *conn;
    bool ssl;
@@ -136,6 +139,7 @@ struct http_connection_t
    int port;
    bool ssl;
    bool no_redirect;
+   bool verify_tls;
 };
 
 struct dns_cache_entry
@@ -561,6 +565,13 @@ void net_http_connection_set_follow_redirects(
       conn->no_redirect = !follow;
 }
 
+void net_http_connection_set_verify_tls(
+      struct http_connection_t *conn, bool verify)
+{
+   if (conn)
+      conn->verify_tls = verify;
+}
+
 void net_http_connection_set_max_body(
       struct http_connection_t *conn, size_t max_body)
 {
@@ -809,7 +820,8 @@ static void net_http_conn_pool_move_to_end(struct conn_pool_entry *entry)
       entry->next = NULL;
 }
 
-static struct conn_pool_entry *net_http_conn_pool_find(const char *domain, int port)
+static struct conn_pool_entry *net_http_conn_pool_find(const char *domain, int port,
+      bool need_verified)
 {
    struct conn_pool_entry *entry;
 
@@ -820,7 +832,12 @@ static struct conn_pool_entry *net_http_conn_pool_find(const char *domain, int p
    entry = conn_pool;
    while (entry)
    {
-      if (!entry->in_use && port == entry->port && string_is_equal(entry->domain, domain))
+      /* A request that needs a checked certificate never reuses a
+       * connection made without the check. */
+      if (     !entry->in_use
+            && port == entry->port
+            && string_is_equal(entry->domain, domain)
+            && (!need_verified || entry->verified))
       {
          entry->in_use = true;
          net_http_conn_pool_move_to_end(entry);
@@ -879,6 +896,7 @@ struct http_t *net_http_new(struct http_connection_t *conn)
    state->request.port          = conn->port;
    state->no_redirect           = conn->no_redirect;
    state->max_body              = conn->max_body;
+   state->verify_tls            = conn->verify_tls;
 
    state->response.status  = -1;
    state->response.buflen  = 64 * 1024;  /* Start with larger buffer to reduce reallocations */
@@ -1013,6 +1031,8 @@ static bool net_http_connect(struct http_t *state)
             socket_close(conn->fd);
             break;
          }
+         if (state->verify_tls)
+            ssl_socket_set_verify(conn->ssl_ctx, true);
 
          /* TODO: Properly figure out what's going wrong when the newer
           timeout/poll code interacts with mbed and winsock
@@ -1027,13 +1047,25 @@ static bool net_http_connect(struct http_t *state)
 
          if (ssl_socket_connect(conn->ssl_ctx, next_addr, timeout, true) < 0)
          {
+            int verr = ssl_socket_get_verify_error(conn->ssl_ctx);
             ssl_socket_close(conn->ssl_ctx);
             ssl_socket_free(conn->ssl_ctx);
             conn->ssl_ctx = NULL;
+            if (verr == SSL_VERIFY_NO_CA)
+            {
+               /* No other address can do better. */
+               state->tls_error = NET_HTTP_TLS_NO_CA;
+               conn->fd         = -1; /* closed above */
+               break;
+            }
+            if (verr == SSL_VERIFY_BAD_CERT)
+               state->tls_error = NET_HTTP_TLS_BAD_CERT;
          }
          else
          {
             conn->connected = true;
+            conn->verified  = state->verify_tls;
+            state->tls_error = NET_HTTP_TLS_OK;
             return true;
          }
       }
@@ -1539,7 +1571,8 @@ bool net_http_update(struct http_t *state, size_t* progress, size_t* total)
 
    if (!state->conn)
    {
-      state->conn = net_http_conn_pool_find(state->request.domain, state->request.port);
+      state->conn = net_http_conn_pool_find(state->request.domain, state->request.port,
+            state->verify_tls);
       if (!state->conn)
       {
          if (!net_http_new_socket(state))
@@ -1688,6 +1721,11 @@ struct string_list *net_http_response_headers(struct http_t *state)
 bool net_http_too_big(struct http_t *state)
 {
    return state && state->too_big;
+}
+
+int net_http_tls_error(struct http_t *state)
+{
+   return state ? state->tls_error : NET_HTTP_TLS_OK;
 }
 
 /**

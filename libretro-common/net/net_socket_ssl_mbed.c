@@ -55,6 +55,15 @@
 #include <mbedtls/entropy.h>
 #endif
 
+#if defined(_WIN32) && !defined(_XBOX) && !defined(__WINRT__)
+#define SSL_WIN32_CERT_STORE
+#include <windows.h>
+#include <wincrypt.h>
+#ifdef _MSC_VER
+#pragma comment(lib, "crypt32.lib")
+#endif
+#endif
+
 /* Not part of the mbedtls upstream source */
 #include "cacert.h"
 
@@ -69,9 +78,89 @@ struct ssl_state
    mbedtls_ssl_config conf;
 #if defined(MBEDTLS_X509_CRT_PARSE_C)
    mbedtls_x509_crt ca;
+   mbedtls_x509_crt sys_ca;   /* system CAs, loaded only when verifying */
 #endif
   const char *domain;
+  bool verify;                /* opt-in: require a verified certificate */
+  int verify_err;             /* enum ssl_verify_error */
 };
+
+static char ssl_ca_override[1024] = {0};
+
+void ssl_socket_set_ca_bundle_override(const char *path)
+{
+   size_t i = 0;
+   if (path)
+      for (; path[i] && i + 1 < sizeof(ssl_ca_override); i++)
+         ssl_ca_override[i] = path[i];
+   ssl_ca_override[i] = '\0';
+}
+
+#if defined(MBEDTLS_X509_CRT_PARSE_C)
+/* Appends the system's trusted CA certificates to chain. True if at
+ * least one could be loaded. */
+static bool ssl_load_system_ca(mbedtls_x509_crt *chain)
+{
+#if defined(MBEDTLS_FS_IO) && !defined(SSL_WIN32_CERT_STORE)
+   /* Linux distributions, the BSDs and macOS. */
+   static const char *bundles[] = {
+      "/etc/ssl/certs/ca-certificates.crt",   /* Debian, Ubuntu, Arch, Gentoo */
+      "/etc/pki/tls/certs/ca-bundle.crt",     /* Fedora, RHEL */
+      "/etc/ssl/ca-bundle.pem",               /* openSUSE */
+      "/etc/ssl/cert.pem",                    /* Alpine, macOS, OpenBSD */
+      "/usr/local/share/certs/ca-root-nss.crt", /* FreeBSD */
+      NULL
+   };
+   int i;
+#endif
+
+#if defined(MBEDTLS_FS_IO)
+   if (ssl_ca_override[0])
+   {
+      mbedtls_x509_crt_parse_file(chain, ssl_ca_override);
+      return chain->version != 0;
+   }
+#endif
+
+#if defined(SSL_WIN32_CERT_STORE)
+   {
+      HCERTSTORE store = CertOpenSystemStoreA(0, "ROOT");
+      if (store)
+      {
+         PCCERT_CONTEXT cert = NULL;
+         while ((cert = CertEnumCertificatesInStore(store, cert)))
+         {
+            if (cert->dwCertEncodingType & X509_ASN_ENCODING)
+               mbedtls_x509_crt_parse_der(chain, cert->pbCertEncoded,
+                     cert->cbCertEncoded);
+         }
+         CertCloseStore(store, 0);
+      }
+   }
+#elif defined(MBEDTLS_FS_IO)
+   for (i = 0; bundles[i] && !chain->version; i++)
+      mbedtls_x509_crt_parse_file(chain, bundles[i]);
+#if defined(ANDROID) || defined(__ANDROID__)
+   if (!chain->version)
+      mbedtls_x509_crt_parse_path(chain, "/system/etc/security/cacerts");
+#endif
+#endif
+   return chain->version != 0;
+}
+#endif
+
+void ssl_socket_set_verify(void *state_data, bool verify)
+{
+   struct ssl_state *state = (struct ssl_state*)state_data;
+   if (state)
+      state->verify = verify;
+}
+
+int ssl_socket_get_verify_error(void *state_data)
+{
+   struct ssl_state *state = (struct ssl_state*)state_data;
+   return state ? state->verify_err : SSL_VERIFY_OK;
+}
 
 static void ssl_debug(void *ctx, int level,
       const char *file, int line,
@@ -106,6 +195,7 @@ void* ssl_socket_init(int fd, const char *domain)
    mbedtls_ssl_config_init(&state->conf);
 #if defined(MBEDTLS_X509_CRT_PARSE_C)
    mbedtls_x509_crt_init(&state->ca);
+   mbedtls_x509_crt_init(&state->sys_ca);
 #endif
    mbedtls_ctr_drbg_init(&state->ctr_drbg);
    mbedtls_entropy_init(&state->entropy);
@@ -140,6 +230,20 @@ int ssl_socket_connect(void *state_data,
    int ret, flags;
    struct ssl_state *state = (struct ssl_state*)state_data;
 
+   state->verify_err = SSL_VERIFY_OK;
+   if (state->verify)
+   {
+      /* Nothing to check the certificate against: fail before any
+       * byte is sent. */
+#if defined(MBEDTLS_X509_CRT_PARSE_C)
+      if (!state->sys_ca.version && !ssl_load_system_ca(&state->sys_ca))
+#endif
+      {
+         state->verify_err = SSL_VERIFY_NO_CA;
+         return -1;
+      }
+   }
+
    if (timeout_enable)
    {
       if (!socket_connect_with_timeout(state->net_ctx.fd, data, 5000))
@@ -160,8 +264,18 @@ int ssl_socket_connect(void *state_data,
                MBEDTLS_SSL_PRESET_DEFAULT) != 0)
       return -1;
 
-   mbedtls_ssl_conf_authmode(&state->conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
-   mbedtls_ssl_conf_ca_chain(&state->conf, &state->ca, NULL);
+#if defined(MBEDTLS_X509_CRT_PARSE_C)
+   if (state->verify)
+   {
+      mbedtls_ssl_conf_authmode(&state->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+      mbedtls_ssl_conf_ca_chain(&state->conf, &state->sys_ca, NULL);
+   }
+   else
+#endif
+   {
+      mbedtls_ssl_conf_authmode(&state->conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
+      mbedtls_ssl_conf_ca_chain(&state->conf, &state->ca, NULL);
+   }
    mbedtls_ssl_conf_rng(&state->conf, mbedtls_ctr_drbg_random, &state->ctr_drbg);
    mbedtls_ssl_conf_dbg(&state->conf, ssl_debug, stderr);
 
@@ -178,13 +292,28 @@ int ssl_socket_connect(void *state_data,
    while ((ret = mbedtls_ssl_handshake(&state->ctx)) != 0)
    {
       if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE)
+      {
+         if (state->verify)
+         {
+            /* Only a failed check counts, not a network error. */
+            uint32_t vr = mbedtls_ssl_get_verify_result(&state->ctx);
+            if (     ret == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED
+                  || (vr != 0 && vr != (uint32_t)-1))
+               state->verify_err = SSL_VERIFY_BAD_CERT;
+         }
          return -1;
+      }
    }
 
    if ((flags = mbedtls_ssl_get_verify_result(&state->ctx)) != 0)
    {
       char vrfy_buf[512];
       mbedtls_x509_crt_verify_info(vrfy_buf, sizeof(vrfy_buf), "  ! ", flags);
+      if (state->verify)
+      {
+         state->verify_err = SSL_VERIFY_BAD_CERT;
+         return -1;
+      }
    }
 
    return state->net_ctx.fd;
@@ -351,6 +480,7 @@ void ssl_socket_free(void *state_data)
    mbedtls_entropy_free(&state->entropy);
 #if defined(MBEDTLS_X509_CRT_PARSE_C)
    mbedtls_x509_crt_free(&state->ca);
+   mbedtls_x509_crt_free(&state->sys_ca);
 #endif
 
    free(state);

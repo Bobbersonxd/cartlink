@@ -31,6 +31,29 @@ RETRO_BEGIN_DECLS
 
 void* ssl_socket_init(int fd, const char *domain);
 
+/* Results of ssl_socket_get_verify_error. */
+enum ssl_verify_error
+{
+   SSL_VERIFY_OK = 0,
+   SSL_VERIFY_NO_CA,      /* no CA certificates could be loaded */
+   SSL_VERIFY_BAD_CERT    /* the server's certificate did not verify */
+};
+
+/* Opt-in, off by default (call between ssl_socket_init and
+ * ssl_socket_connect). When on, ssl_socket_connect fails unless the
+ * server's certificate chain verifies against the system's CA
+ * certificates for the domain given to ssl_socket_init. When off,
+ * the handshake behaves as before (certificate not checked). */
+void ssl_socket_set_verify(void *state_data, bool verify);
+
+/* Why the last ssl_socket_connect failed verification
+ * (enum ssl_verify_error). */
+int ssl_socket_get_verify_error(void *state_data);
+
+/* Test hook: verification loads CA certificates from this PEM file
+ * instead of the system store. NULL or "" restores the system store. */
+void ssl_socket_set_ca_bundle_override(const char *path);
+
 int ssl_socket_connect(void *state_data, void *data, bool timeout_enable, bool nonblock);
 
 int ssl_socket_send_all_blocking(void *state_data, const void *data_, size_t len, bool no_signal);

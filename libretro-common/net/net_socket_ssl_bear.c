@@ -34,6 +34,8 @@ struct ssl_state
    br_ssl_client_context sc;
    br_x509_minimal_context xc;
    uint8_t iobuf[BR_SSL_BUFSIZE_BIDI];
+   bool verify;
+   int verify_err;
 };
 
 /* TODO/FIXME - static global variables */
@@ -176,6 +178,23 @@ void* ssl_socket_init(int fd, const char *domain)
    return state;
 }
 
+/* BearSSL always checks the certificate against the bundled CA list,
+ * so verification only needs that list to be non-empty. */
+void ssl_socket_set_verify(void *state_data, bool verify)
+{
+   struct ssl_state *state = (struct ssl_state*)state_data;
+   if (state)
+      state->verify = verify;
+}
+
+int ssl_socket_get_verify_error(void *state_data)
+{
+   struct ssl_state *state = (struct ssl_state*)state_data;
+   return state ? state->verify_err : SSL_VERIFY_OK;
+}
+
+void ssl_socket_set_ca_bundle_override(const char *path) { }
+
 static bool process_inner(struct ssl_state *state, bool blocking)
 {
    bool dummy;
@@ -222,6 +241,13 @@ int ssl_socket_connect(void *state_data,
    struct ssl_state *state = (struct ssl_state*)state_data;
    unsigned bearstate;
 
+   state->verify_err = SSL_VERIFY_OK;
+   if (state->verify && !TAs_NUM)
+   {
+      state->verify_err = SSL_VERIFY_NO_CA;
+      return -1;
+   }
+
    if (timeout_enable)
    {
       if (!socket_connect_with_timeout(state->fd, data, 5000))
@@ -245,7 +271,12 @@ int ssl_socket_connect(void *state_data,
       if (bearstate & BR_SSL_SENDAPP)
          break; /* handshake done */
       if (bearstate & BR_SSL_CLOSED)
+      {
+         int err = br_ssl_engine_last_error(&state->sc.eng);
+         if (state->verify && err > BR_ERR_X509_OK && err < 256)
+            state->verify_err = SSL_VERIFY_BAD_CERT;
          return -1; /* failed */
+      }
    }
 
    return 1;

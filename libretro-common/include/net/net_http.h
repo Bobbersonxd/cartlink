@@ -55,6 +55,15 @@ void net_http_connection_set_headers(struct http_connection_t *conn, const char 
  * and Location header) instead of being followed. */
 void net_http_connection_set_follow_redirects(struct http_connection_t *conn, bool follow);
 
+/* Default false: TLS behaves as before (the certificate is not
+ * checked). When true, an https request only goes ahead if the
+ * server's certificate chain verifies against the system's CA
+ * certificates for the host name; otherwise it fails before anything
+ * is sent and net_http_tls_error() says why. Pooled connections made
+ * without the check are not reused for such a request. No effect on
+ * http. */
+void net_http_connection_set_verify_tls(struct http_connection_t *conn, bool verify);
+
 /* Default 0 (no limit). A body larger than max_body bytes fails the
  * request; net_http_too_big() then returns true. */
 void net_http_connection_set_max_body(struct http_connection_t *conn, size_t max_body);
@@ -133,6 +142,21 @@ struct string_list *net_http_response_headers(struct http_t *state);
  * connection's max_body or a buffer could not be allocated.
  **/
 bool net_http_too_big(struct http_t *state);
+
+enum net_http_tls_error
+{
+   NET_HTTP_TLS_OK = 0,
+   NET_HTTP_TLS_NO_CA,      /* no CA certificates could be loaded */
+   NET_HTTP_TLS_BAD_CERT    /* the certificate did not verify */
+};
+
+/**
+ * net_http_tls_error:
+ *
+ * @return why a request with verify_tls failed to connect
+ * (enum net_http_tls_error); NET_HTTP_TLS_OK otherwise.
+ **/
+int net_http_tls_error(struct http_t *state);
 
 /**
  * net_http_data:
