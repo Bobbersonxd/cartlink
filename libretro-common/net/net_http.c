@@ -1555,6 +1555,13 @@ struct string_list *net_http_headers(struct http_t *state)
    return state->response.headers;
 }
 
+struct string_list *net_http_response_headers(struct http_t *state)
+{
+   if (!state)
+      return NULL;
+   return state->response.headers;
+}
+
 /**
  * net_http_data:
  *

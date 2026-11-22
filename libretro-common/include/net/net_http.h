@@ -108,6 +108,17 @@ bool net_http_error(struct http_t *state);
 struct string_list *net_http_headers(struct http_t *state);
 
 /**
+ * net_http_response_headers:
+ *
+ * Leaf function.
+ *
+ * @return the response headers of the last response (after redirects),
+ * whatever the status or error state. Same ownership as
+ * net_http_headers: the caller frees it with string_list_free.
+ **/
+struct string_list *net_http_response_headers(struct http_t *state);
+
+/**
  * net_http_data:
  *
  * Leaf function.
