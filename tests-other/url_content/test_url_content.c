@@ -323,7 +323,9 @@ static void test_logins(void)
    char access[128];
    char secret[128];
    char line[256];
+#ifndef _WIN32
    struct stat st;
+#endif
    FILE *f;
    bool saw_host_key = false;
 
@@ -350,7 +352,10 @@ static void test_logins(void)
    EXPECT(url_logins_set("example.com", "alice", "s3cret pass"));
    EXPECT(url_logins_set("files.my-nas.local", "bob", "hunter2"));
    EXPECT(file_exists(path));
+#ifndef _WIN32
+   /* Windows has no POSIX file modes; url_logins skips them there. */
    EXPECT(stat(path, &st) == 0 && (st.st_mode & 0777) == 0600);
+#endif
 
    user[0] = pass[0] = '\0';
    EXPECT(url_logins_get("example.com", user, sizeof(user),
@@ -405,7 +410,10 @@ static void test_logins(void)
    EXPECT(url_logins_get("example.com", user, sizeof(user),
          pass, sizeof(pass)));
    EXPECT_STR(user, "carol");
+#ifndef _WIN32
+   /* Windows has no POSIX file modes; url_logins skips them there. */
    EXPECT(stat(path, &st) == 0 && (st.st_mode & 0777) == 0600);
+#endif
 
    /* Forget all: file gone, every get false. */
    EXPECT(url_logins_forget_all());
