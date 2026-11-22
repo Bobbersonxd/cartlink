@@ -36,7 +36,8 @@ bool url_logins_get(const char *host, char *user, size_t ulen,
       char *pass, size_t plen);
 
 /* Adds or replaces the login for host and writes the file (mode 0600
- * on POSIX). Refuses values containing '"', CR or LF, which the file
+ * on POSIX) through <path>.tmp and a rename, so the old file stays
+ * whole if writing fails. Refuses values containing '"', CR or LF, which the file
  * format cannot store. */
 bool url_logins_set(const char *host, const char *user, const char *pass);
 
@@ -44,7 +45,8 @@ bool url_logins_get_archive_keys(char *access, size_t alen,
       char *secret, size_t slen);
 bool url_logins_set_archive_keys(const char *access, const char *secret);
 
-/* Deletes the file. True if it is gone afterwards. */
+/* Deletes the file (and a leftover <path>.tmp). True if it is gone
+ * afterwards. */
 bool url_logins_forget_all(void);
 
 RETRO_END_DECLS

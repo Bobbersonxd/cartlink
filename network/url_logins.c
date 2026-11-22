@@ -90,19 +90,53 @@ static config_file_t *url_logins_open(bool create)
    return create ? config_file_new_alloc() : NULL;
 }
 
-static bool url_logins_write(config_file_t *conf)
+/* Owner-only file mode (POSIX). True elsewhere. */
+static bool url_logins_tighten(const char *path, bool create)
 {
 #ifdef URL_LOGINS_POSIX_MODE
-   /* Create (or tighten) the file as 0600 before any secret is
-    * written; fopen("wb") then truncates it and keeps the mode. */
-   int fd = open(url_logins_path, O_WRONLY | O_CREAT, 0600);
+   int fd = open(path, O_WRONLY | (create ? (O_CREAT | O_TRUNC) : 0), 0600);
    if (fd < 0)
       return false;
    close(fd);
-   if (chmod(url_logins_path, 0600) != 0)
+   if (chmod(path, 0600) != 0)
       return false;
 #endif
-   return config_file_write(conf, url_logins_path, true);
+   return true;
+}
+
+/* Writes <path>.tmp (0600 on POSIX, before any secret is in it), then
+ * renames it over the old file, so a crash or a full disk never
+ * leaves a half-written logins file. */
+static bool url_logins_write(config_file_t *conf)
+{
+   char tmp[sizeof(url_logins_path) + 8];
+
+   if (!(conf->flags & CONF_FILE_FLG_MODIFIED))
+      return url_logins_tighten(url_logins_path, false);
+
+   if (strlcpy(tmp, url_logins_path, sizeof(tmp)) >= sizeof(tmp)
+         || strlcat(tmp, ".tmp", sizeof(tmp)) >= sizeof(tmp))
+      return false;
+   if (path_is_valid(tmp))
+      filestream_delete(tmp);
+   if (     !url_logins_tighten(tmp, true)
+         || !config_file_write(conf, tmp, true)
+         || !path_is_valid(tmp))
+   {
+      filestream_delete(tmp);
+      return false;
+   }
+   if (filestream_rename(tmp, url_logins_path) != 0)
+   {
+      /* Windows cannot rename over an existing file. */
+      filestream_delete(url_logins_path);
+      if (filestream_rename(tmp, url_logins_path) != 0)
+      {
+         filestream_delete(tmp);
+         return false;
+      }
+   }
+   return true;
 }
 
 static bool url_logins_get_pair(const char *key_a, char *a, size_t alen,
@@ -170,8 +204,14 @@ bool url_logins_set_archive_keys(const char *access, const char *secret)
 
 bool url_logins_forget_all(void)
 {
+   char tmp[sizeof(url_logins_path) + 8];
    if (string_is_empty(url_logins_path))
       return false;
+   /* A .tmp left by a crash mid-write holds secrets too. */
+   if (     strlcpy(tmp, url_logins_path, sizeof(tmp)) < sizeof(tmp)
+         && strlcat(tmp, ".tmp", sizeof(tmp)) < sizeof(tmp)
+         && path_is_valid(tmp))
+      filestream_delete(tmp);
    if (path_is_valid(url_logins_path))
       filestream_delete(url_logins_path);
    return !path_is_valid(url_logins_path);

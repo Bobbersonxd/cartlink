@@ -27,9 +27,20 @@
 #include "url_content.h"
 
 #define UC_FIELD_LEN     256
-#define UC_NAME_MAX      180
+/* Longest sanitized file name kept (bytes). Leaves room for the cache
+ * folder and the 17-byte hash prefix under Windows' 260-char paths. */
+#define UC_NAME_MAX      100
 
 static char uc_test_cnonce[64] = {0};
+
+void url_content_wipe(void *p, size_t len)
+{
+   volatile unsigned char *b = (volatile unsigned char*)p;
+   if (!p)
+      return;
+   while (len--)
+      *b++ = 0;
+}
 
 /* ---------- small string helpers ---------- */
 
@@ -415,12 +426,25 @@ void url_content_fix_link(char *out, size_t len, const char *url)
       uc_fix_onedrive(out, len, buf);
       return;
    }
-   else if (uc_host_is(host, "archive.org")
-         && strncmp(path, "/details/", 9) == 0)
+   else if (uc_host_is(host, "archive.org"))
    {
-      snprintf(out, len, "%.*s/download/%s",
-            (int)(path - buf), buf, path + 9);
-      return;
+      /* archive.org keys are only ever sent over https, so plain http
+       * links are moved to https (archive.org redirects them anyway). */
+      if (uc_starts_with_ci(buf, "http://"))
+      {
+         char tmp[2048];
+         strlcpy(tmp, "https://", sizeof(tmp));
+         strlcat(tmp, buf + 7, sizeof(tmp));
+         strlcpy(buf, tmp, sizeof(buf));
+         auth = uc_authority(buf);
+         path = uc_authority_end(auth);
+      }
+      if (strncmp(path, "/details/", 9) == 0)
+      {
+         snprintf(out, len, "%.*s/download/%s",
+               (int)(path - buf), buf, path + 9);
+         return;
+      }
    }
 
    strlcpy(out, buf, len);
@@ -432,6 +456,23 @@ static bool uc_is_bad_name_char(unsigned char c)
 {
    return c < 0x20 || c == 0x7f || c == ':' || c == '*' || c == '?'
        || c == '"' || c == '<' || c == '>' || c == '|';
+}
+
+/* In place: collapses ".." runs to "." and drops trailing dots and
+ * spaces (Windows cannot have them). */
+static void uc_tidy_name(char *s)
+{
+   size_t i;
+   size_t o = 0;
+   for (i = 0; s[i]; i++)
+   {
+      if (s[i] == '.' && o && s[o - 1] == '.')
+         continue;
+      s[o++] = s[i];
+   }
+   while (o && (s[o - 1] == '.' || s[o - 1] == ' '))
+      o--;
+   s[o] = '\0';
 }
 
 /* Reduces name (in place) to a safe single file name */
@@ -458,20 +499,25 @@ static void uc_sanitize_name(char *name, size_t size)
       tmp[o++] = uc_is_bad_name_char(c) ? '_' : (char)c;
    }
 
-   /* No trailing dots or spaces (Windows) */
-   while (o && (tmp[o - 1] == '.' || tmp[o - 1] == ' '))
-      o--;
    tmp[o] = '\0';
+   uc_tidy_name(tmp);
+   o = strlen(tmp);
 
    if (o > UC_NAME_MAX)
    {
-      /* Shorten, keeping a short extension */
+      /* Shorten, keeping a short extension. The cut is moved back to
+       * the start of a UTF-8 character, then the name is tidied again:
+       * the cut can leave ".." or a trailing dot or space. */
       char  *dot  = strrchr(tmp, '.');
       size_t elen = dot ? strlen(dot) : 0;
+      size_t keep;
       if (elen > 16)
          elen = 0;
-      memmove(tmp + UC_NAME_MAX - elen, tmp + o - elen, elen + 1);
-      tmp[UC_NAME_MAX] = '\0';
+      keep = UC_NAME_MAX - elen;
+      while (keep && ((unsigned char)tmp[keep] & 0xC0) == 0x80)
+         keep--;
+      memmove(tmp + keep, tmp + o - elen, elen + 1);
+      uc_tidy_name(tmp);
    }
 
    if (!tmp[0])
@@ -620,8 +666,8 @@ void url_content_basic_auth_header(char *out, size_t len,
    if (!(b64 = base64(creds, n, &flen)))
       return;
    snprintf(out, len, "Authorization: Basic %s\r\n", b64);
-   memset(b64, 0, (size_t)flen);
-   memset(creds, 0, sizeof(creds));
+   url_content_wipe(b64, (size_t)flen);
+   url_content_wipe(creds, sizeof(creds));
    free(b64);
 }
 
@@ -1018,13 +1064,6 @@ bool url_content_form_encode(char *out, size_t len, const char *s)
 #define UC_JSON_DEPTH 8
 #define UC_JSON_KEY   32
 
-static void uc_wipe(char *s, size_t len)
-{
-   volatile char *p = s;
-   while (len--)
-      *p++ = '\0';
-}
-
 /* True if the member path of the current value is exactly a/b/c
  * (NULL ends the path early). */
 static bool uc_json_path(char keys[][UC_JSON_KEY], unsigned depth,
@@ -1158,8 +1197,8 @@ bool url_content_parse_archive_login(const char *json, size_t json_len,
    if (!broken && success == 1 && got_access && got_secret && !too_long)
       return true;
 
-   uc_wipe(access, alen);
-   uc_wipe(secret, slen);
+   url_content_wipe(access, alen);
+   url_content_wipe(secret, slen);
    if (err && elen)
    {
       if (broken || success == -1)

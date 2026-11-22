@@ -44,7 +44,8 @@ bool url_content_cli_should_fetch(bool first_pass, const char *content,
       const char *core_path, bool builtin_player);
 
 /* Rewrites share links (Google Drive, Dropbox, OneDrive, archive.org)
- * into direct-download links. Other URLs are copied unchanged. */
+ * into direct-download links; http:// archive.org links become
+ * https://. Other URLs are copied unchanged. */
 void url_content_fix_link(char *out, size_t len, const char *url);
 
 /* Extracts the file name from a Content-Disposition header line
@@ -56,7 +57,9 @@ bool url_content_name_from_disposition(char *out, size_t len,
 
 /* Cache file name: 16 hex chars of SHA1(fixed_url), '_', then a
  * sanitized file name (name_or_null if non-empty, else the URL's last
- * path segment, percent-decoded, else "download.bin"). */
+ * path segment, percent-decoded, else "download.bin"). The name is
+ * cut to at most 100 bytes on a UTF-8 character boundary, keeping an
+ * extension of up to 16 bytes. */
 void url_content_cache_name(char *out, size_t len,
       const char *fixed_url, const char *name_or_null);
 
@@ -98,6 +101,10 @@ bool url_content_form_encode(char *out, size_t len, const char *s);
 bool url_content_parse_archive_login(const char *json, size_t json_len,
       char *access, size_t alen, char *secret, size_t slen,
       char *err, size_t elen);
+
+/* Zeroes len bytes at p through a volatile pointer, so the compiler
+ * cannot drop it. For passwords, keys and auth headers. NULL is fine. */
+void url_content_wipe(void *p, size_t len);
 
 /* Test hook: forces the digest client nonce. NULL restores random. */
 void url_content_set_test_cnonce(const char *cnonce);

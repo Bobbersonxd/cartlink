@@ -107,6 +107,23 @@ static void test_fix_link(void)
          "https://archive.org/details/ITEM/file%20name.zip");
    EXPECT_STR(out, "https://archive.org/download/ITEM/file%20name.zip");
 
+   /* Plain http archive.org links move to https (keys only go over
+    * https); other hosts keep http. */
+   url_content_fix_link(out, sizeof(out),
+         "http://archive.org/details/ITEM/game.zip");
+   EXPECT_STR(out, "https://archive.org/download/ITEM/game.zip");
+   url_content_fix_link(out, sizeof(out),
+         "HTTP://ia800.us.archive.org/12/items/ITEM/game.zip");
+   EXPECT_STR(out, "https://ia800.us.archive.org/12/items/ITEM/game.zip");
+   url_content_fix_link(out, sizeof(out),
+         "http://archive.org/download/ITEM/game.zip");
+   EXPECT_STR(out, "https://archive.org/download/ITEM/game.zip");
+   url_content_fix_link(out, sizeof(out),
+         "http://notarchive.org/details/ITEM");
+   EXPECT_STR(out, "http://notarchive.org/details/ITEM");
+   url_content_fix_link(out, sizeof(out), "http://example.com/a.sfc");
+   EXPECT_STR(out, "http://example.com/a.sfc");
+
    url_content_fix_link(out, sizeof(out), "https://example.com/a.sfc");
    EXPECT_STR(out, "https://example.com/a.sfc");
 
@@ -159,6 +176,69 @@ static void test_cache_name(void)
          "https://example.com/dir/file.gba?token=x#frag", NULL);
    EXPECT(ends_with(a, "_file.gba"));
 
+   /* Long names: at most 100 bytes after the prefix, extension kept,
+    * no "..", no trailing dot, cut on a UTF-8 boundary. */
+   {
+      char name[400];
+      char want[200];
+      const char *n;
+
+      /* Reviewer's case: 175 a, '.', 10 b, ".zip". */
+      memset(name, 'a', 175);
+      name[175] = '.';
+      memset(name + 176, 'b', 10);
+      strcpy(name + 186, ".zip");
+      url_content_cache_name(a, sizeof(a), u, name);
+      n = a + 17;
+      EXPECT(strlen(n) <= 100);
+      EXPECT(ends_with(a, ".zip"));
+      EXPECT(!strstr(a, ".."));
+      memset(want, 'a', 96);
+      strcpy(want + 96, ".zip");
+      EXPECT_STR(n, want);
+
+      /* The cut lands right after a dot: no ".." left behind. */
+      memset(name, 'a', 95);
+      name[95] = '.';
+      memset(name + 96, 'b', 30);
+      strcpy(name + 126, ".zip");
+      url_content_cache_name(a, sizeof(a), u, name);
+      n = a + 17;
+      EXPECT(strlen(n) <= 100);
+      EXPECT(!strstr(n, ".."));
+      memset(want, 'a', 95);
+      strcpy(want + 95, ".zip");
+      EXPECT_STR(n, want);
+
+      /* The cut lands inside a 2-byte UTF-8 character (e9 = e-acute):
+       * the whole character goes. */
+      memset(name, 'a', 95);
+      name[95] = (char)0xC3;
+      name[96] = (char)0xA9;
+      memset(name + 97, 'b', 30);
+      strcpy(name + 127, ".zip");
+      url_content_cache_name(a, sizeof(a), u, name);
+      n = a + 17;
+      EXPECT_STR(n, want);
+
+      /* No (short) extension: plain cut, no trailing dot or space. */
+      memset(name, 'c', 99);
+      name[99] = ' ';
+      memset(name + 100, 'd', 50);
+      name[150] = '\0';
+      url_content_cache_name(a, sizeof(a), u, name);
+      n = a + 17;
+      memset(want, 'c', 99);
+      want[99] = '\0';
+      EXPECT_STR(n, want);
+
+      /* Exactly 100 bytes stays as is. */
+      memset(name, 'e', 96);
+      strcpy(name + 96, ".sfc");
+      url_content_cache_name(a, sizeof(a), u, name);
+      EXPECT_STR(a + 17, name);
+   }
+
    url_content_cache_name(a, sizeof(a), u, "Real.gba");
    EXPECT(ends_with(a, "_Real.gba"));
    url_content_cache_name(a, sizeof(a), u, "");
@@ -205,6 +285,20 @@ static void test_host(void)
    EXPECT_STR(out, "example.com");
    url_content_host(out, sizeof(out), "http://[::1]:8080/x");
    EXPECT_STR(out, "[::1]");
+}
+
+static void test_wipe(void)
+{
+   char buf[16];
+   size_t i;
+   bool zero = true;
+   memset(buf, 'x', sizeof(buf));
+   url_content_wipe(buf, sizeof(buf));
+   for (i = 0; i < sizeof(buf); i++)
+      if (buf[i])
+         zero = false;
+   EXPECT(zero);
+   url_content_wipe(NULL, 4); /* must not crash */
 }
 
 static void test_basic_auth(void)
@@ -414,6 +508,44 @@ static void test_logins(void)
    /* Windows has no POSIX file modes; url_logins skips them there. */
    EXPECT(stat(path, &st) == 0 && (st.st_mode & 0777) == 0600);
 #endif
+
+   /* Writes go through <path>.tmp + rename: no .tmp is left, a
+    * stale one is replaced, and a failed write keeps the old file. */
+   {
+      char tmp[600];
+      snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+      EXPECT(!file_exists(tmp));
+      if ((f = fopen(tmp, "wb")))
+      {
+         fputs("stale junk\n", f);
+         fclose(f);
+      }
+      EXPECT(url_logins_set("example.com", "dave", "pw2"));
+      EXPECT(!file_exists(tmp));
+      EXPECT(url_logins_get("example.com", user, sizeof(user),
+            pass, sizeof(pass)));
+      EXPECT_STR(user, "dave");
+#ifndef _WIN32
+      EXPECT(stat(path, &st) == 0 && (st.st_mode & 0777) == 0600);
+      /* A folder in the way of the .tmp: the write fails, the old
+       * file is untouched. */
+      {
+         char inner[700];
+         snprintf(inner, sizeof(inner), "%s/x", tmp);
+         EXPECT(mkdir(tmp, 0700) == 0);
+         if ((f = fopen(inner, "wb")))
+            fclose(f);
+         EXPECT(!url_logins_set("example.com", "eve", "pw3"));
+         remove(inner);
+      }
+      EXPECT(url_logins_get("example.com", user, sizeof(user),
+            pass, sizeof(pass)));
+      EXPECT_STR(user, "dave");
+      EXPECT_STR(pass, "pw2");
+      rmdir(tmp);
+#endif
+      EXPECT(url_logins_set("example.com", "carol", "new"));
+   }
 
    /* Forget all: file gone, every get false. */
    EXPECT(url_logins_forget_all());
@@ -636,6 +768,7 @@ int main(void)
    test_cache_name();
    test_disposition();
    test_host();
+   test_wipe();
    test_basic_auth();
    test_digest_auth();
    test_archive_auth();
