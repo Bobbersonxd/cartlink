@@ -1,0 +1,923 @@
+/*  RetroArch - A frontend for libretro.
+ *
+ *  RetroArch is free software: you can redistribute it and/or modify it under the terms
+ *  of the GNU General Public License as published by the Free Software Found-
+ *  ation, either version 3 of the License, or (at your option) any later version.
+ *
+ *  RetroArch is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+ *  without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+ *  PURPOSE.  See the GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License along with RetroArch.
+ *  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#ifdef HAVE_NETWORKING
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#include <compat/strl.h>
+#include <encodings/base64.h>
+#include <lrc_hash.h>
+
+#include "url_content.h"
+
+#define UC_FIELD_LEN     256
+#define UC_NAME_MAX      180
+
+static char uc_test_cnonce[64] = {0};
+
+/* ---------- small string helpers ---------- */
+
+static char uc_lower(char c)
+{
+   if (c >= 'A' && c <= 'Z')
+      return (char)(c - 'A' + 'a');
+   return c;
+}
+
+static bool uc_is_space(char c)
+{
+   return c == ' ' || c == '\t' || c == '\r' || c == '\n'
+       || c == '\f' || c == '\v';
+}
+
+/* Case-insensitive prefix test */
+static bool uc_starts_with_ci(const char *s, const char *prefix)
+{
+   while (*prefix)
+   {
+      if (uc_lower(*s) != uc_lower(*prefix))
+         return false;
+      s++;
+      prefix++;
+   }
+   return true;
+}
+
+/* Case-insensitive substring search */
+static const char *uc_find_ci(const char *s, const char *needle)
+{
+   for (; *s; s++)
+      if (uc_starts_with_ci(s, needle))
+         return s;
+   return NULL;
+}
+
+/* Copies at most n bytes of src into out (always terminated) */
+static void uc_copy_n(char *out, size_t len, const char *src, size_t n)
+{
+   if (!len)
+      return;
+   if (n >= len)
+      n = len - 1;
+   memcpy(out, src, n);
+   out[n] = '\0';
+}
+
+static int uc_hex_val(char c)
+{
+   if (c >= '0' && c <= '9')
+      return c - '0';
+   if (c >= 'a' && c <= 'f')
+      return c - 'a' + 10;
+   if (c >= 'A' && c <= 'F')
+      return c - 'A' + 10;
+   return -1;
+}
+
+/* Percent-decodes n bytes of src into out. Invalid escapes are kept. */
+static void uc_pct_decode(char *out, size_t len, const char *src, size_t n)
+{
+   size_t i = 0;
+   size_t o = 0;
+
+   if (!len)
+      return;
+
+   while (i < n && o + 1 < len)
+   {
+      if (src[i] == '%' && i + 2 < n
+            && uc_hex_val(src[i + 1]) >= 0 && uc_hex_val(src[i + 2]) >= 0)
+      {
+         out[o++] = (char)(uc_hex_val(src[i + 1]) * 16
+               + uc_hex_val(src[i + 2]));
+         i       += 3;
+      }
+      else
+         out[o++] = src[i++];
+   }
+   out[o] = '\0';
+}
+
+static void uc_hex(char *out, const uint8_t *data, size_t n)
+{
+   static const char digits[] = "0123456789abcdef";
+   size_t i;
+   for (i = 0; i < n; i++)
+   {
+      out[i * 2]     = digits[data[i] >> 4];
+      out[i * 2 + 1] = digits[data[i] & 0x0f];
+   }
+   out[n * 2] = '\0';
+}
+
+/* ---------- URL parsing ---------- */
+
+/* Start of the authority (after "scheme://"), or NULL */
+static const char *uc_authority(const char *url)
+{
+   const char *p = strstr(url, "://");
+   if (!p)
+      return NULL;
+   return p + 3;
+}
+
+/* First character after the authority: '/', '?', '#' or '\0' */
+static const char *uc_authority_end(const char *auth)
+{
+   while (*auth && *auth != '/' && *auth != '?' && *auth != '#')
+      auth++;
+   return auth;
+}
+
+/* End of the path part: '?', '#' or '\0' */
+static const char *uc_path_end(const char *path)
+{
+   while (*path && *path != '?' && *path != '#')
+      path++;
+   return path;
+}
+
+/* True if host equals domain or is a subdomain of it */
+static bool uc_host_is(const char *host, const char *domain)
+{
+   size_t lh = strlen(host);
+   size_t ld = strlen(domain);
+   if (lh == ld)
+      return strcmp(host, domain) == 0;
+   if (lh > ld)
+      return host[lh - ld - 1] == '.'
+         && strcmp(host + lh - ld, domain) == 0;
+   return false;
+}
+
+void url_content_host(char *out, size_t len, const char *url)
+{
+   const char *auth;
+   const char *end;
+   const char *at;
+   const char *p;
+   size_t i, n;
+
+   if (!len)
+      return;
+   out[0] = '\0';
+   if (!url || !(auth = uc_authority(url)))
+      return;
+
+   end = uc_authority_end(auth);
+
+   /* Skip "user:pass@" */
+   at  = NULL;
+   for (p = auth; p < end; p++)
+      if (*p == '@')
+         at = p;
+   if (at)
+      auth = at + 1;
+
+   if (*auth == '[')
+   {
+      /* IPv6 literal: keep the brackets, drop the port */
+      p = auth;
+      while (p < end && *p != ']')
+         p++;
+      if (p < end)
+         p++;
+   }
+   else
+   {
+      p = auth;
+      while (p < end && *p != ':')
+         p++;
+   }
+
+   n = (size_t)(p - auth);
+   uc_copy_n(out, len, auth, n);
+   for (i = 0; out[i]; i++)
+      out[i] = uc_lower(out[i]);
+}
+
+bool url_content_is_downloadable(const char *path)
+{
+   static const char *media_exts[] = {
+      "mp4", "mkv", "avi", "webm", "flv", "ogm", "3gp", "3g2",
+      "mp3", "ogg", "flac", "wav", "m3u8", NULL
+   };
+   const char *auth;
+   const char *p;
+   const char *end;
+   const char *dot = NULL;
+   char ext[16];
+   size_t i, n;
+
+   if (!path)
+      return false;
+   if (   !uc_starts_with_ci(path, "http://")
+       && !uc_starts_with_ci(path, "https://"))
+      return false;
+
+   auth = uc_authority(path);
+   p    = uc_authority_end(auth);
+   end  = uc_path_end(p);
+
+   for (; p < end; p++)
+   {
+      if (*p == '/')
+         dot = NULL;
+      else if (*p == '.')
+         dot = p;
+   }
+   if (!dot)
+      return true;
+
+   n = (size_t)(end - dot - 1);
+   if (n == 0 || n >= sizeof(ext))
+      return true;
+   for (i = 0; i < n; i++)
+      ext[i] = uc_lower(dot[1 + i]);
+   ext[n] = '\0';
+
+   for (i = 0; media_exts[i]; i++)
+      if (strcmp(ext, media_exts[i]) == 0)
+         return false;
+   return true;
+}
+
+/* ---------- link fixer ---------- */
+
+static bool uc_is_drive_id_char(char c)
+{
+   return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+       || (c >= '0' && c <= '9') || c == '-' || c == '_';
+}
+
+/* Finds the value of a query parameter (exact name), or NULL */
+static const char *uc_query_param(const char *url, const char *name)
+{
+   size_t      nlen = strlen(name);
+   const char *q    = strchr(url, '?');
+   const char *frag = strchr(url, '#');
+
+   if (!q || (frag && frag < q))
+      return NULL;
+   q++;
+   while (*q && *q != '#')
+   {
+      if (strncmp(q, name, nlen) == 0 && q[nlen] == '=')
+         return q + nlen + 1;
+      while (*q && *q != '&' && *q != '#')
+         q++;
+      if (*q == '&')
+         q++;
+   }
+   return NULL;
+}
+
+static bool uc_fix_google_drive(char *out, size_t len,
+      const char *url, const char *path)
+{
+   const char *id = NULL;
+   size_t      n  = 0;
+
+   if (strncmp(path, "/file/d/", 8) == 0)
+      id = path + 8;
+   else
+      id = uc_query_param(url, "id");
+
+   if (!id)
+      return false;
+   while (uc_is_drive_id_char(id[n]))
+      n++;
+   if (!n)
+      return false;
+
+   snprintf(out, len,
+         "https://drive.usercontent.google.com/download?id=%.*s"
+         "&export=download&confirm=t", (int)n, id);
+   return true;
+}
+
+static void uc_fix_dropbox(char *out, size_t len, const char *url)
+{
+   const char *dl   = uc_query_param(url, "dl");
+   const char *frag = strchr(url, '#');
+   const char *q    = strchr(url, '?');
+   size_t      pre;
+
+   if (dl)
+   {
+      const char *rest = dl;
+      while (*rest && *rest != '&' && *rest != '#')
+         rest++;
+      snprintf(out, len, "%.*s1%s", (int)(dl - url), url, rest);
+      return;
+   }
+
+   if (q && frag && frag < q)
+      q = NULL;
+   pre = frag ? (size_t)(frag - url) : strlen(url);
+   snprintf(out, len, "%.*s%s%s", (int)pre, url,
+         q ? "&dl=1" : "?dl=1", frag ? frag : "");
+}
+
+static void uc_fix_onedrive(char *out, size_t len, const char *url)
+{
+   int   flen = 0;
+   char *b64  = base64(url, (int)strlen(url), &flen);
+   int   i, o;
+
+   if (!b64)
+   {
+      strlcpy(out, url, len);
+      return;
+   }
+
+   /* base64 -> base64url, no padding */
+   for (i = 0, o = 0; i < flen; i++)
+   {
+      char c = b64[i];
+      if (c == '=')
+         break;
+      if (c == '+')
+         c = '-';
+      else if (c == '/')
+         c = '_';
+      b64[o++] = c;
+   }
+   b64[o] = '\0';
+
+   snprintf(out, len, "https://api.onedrive.com/v1.0/shares/u!%s/root/content",
+         b64);
+   free(b64);
+}
+
+void url_content_fix_link(char *out, size_t len, const char *url)
+{
+   char        buf[2048];
+   char        host[UC_FIELD_LEN];
+   const char *auth;
+   const char *path;
+   const char *s;
+   size_t      n;
+
+   if (!len)
+      return;
+   out[0] = '\0';
+   if (!url)
+      return;
+
+   /* Trim surrounding whitespace (pasted links) */
+   s = url;
+   while (uc_is_space(*s))
+      s++;
+   n = strlen(s);
+   while (n && uc_is_space(s[n - 1]))
+      n--;
+   uc_copy_n(buf, sizeof(buf), s, n);
+
+   if (!(auth = uc_authority(buf)))
+   {
+      strlcpy(out, buf, len);
+      return;
+   }
+   path = uc_authority_end(auth);
+   url_content_host(host, sizeof(host), buf);
+
+   if (   uc_host_is(host, "drive.google.com")
+       || uc_host_is(host, "docs.google.com"))
+   {
+      if (uc_fix_google_drive(out, len, buf, path))
+         return;
+   }
+   else if (uc_host_is(host, "dropbox.com"))
+   {
+      uc_fix_dropbox(out, len, buf);
+      return;
+   }
+   else if (uc_host_is(host, "1drv.ms")
+         || uc_host_is(host, "onedrive.live.com"))
+   {
+      uc_fix_onedrive(out, len, buf);
+      return;
+   }
+   else if (uc_host_is(host, "archive.org")
+         && strncmp(path, "/details/", 9) == 0)
+   {
+      snprintf(out, len, "%.*s/download/%s",
+            (int)(path - buf), buf, path + 9);
+      return;
+   }
+
+   strlcpy(out, buf, len);
+}
+
+/* ---------- file names ---------- */
+
+static bool uc_is_bad_name_char(unsigned char c)
+{
+   return c < 0x20 || c == 0x7f || c == ':' || c == '*' || c == '?'
+       || c == '"' || c == '<' || c == '>' || c == '|';
+}
+
+/* Reduces name (in place) to a safe single file name */
+static void uc_sanitize_name(char *name, size_t size)
+{
+   const char *base = name;
+   const char *p;
+   char        tmp[UC_FIELD_LEN];
+   size_t      o = 0;
+
+   for (p = name; *p; p++)
+      if (*p == '/' || *p == '\\')
+         base = p + 1;
+
+   /* No leading dots or spaces (hidden files, "..") */
+   while (*base == '.' || *base == ' ')
+      base++;
+
+   for (p = base; *p && o + 1 < sizeof(tmp); p++)
+   {
+      unsigned char c = (unsigned char)*p;
+      if (c == '.' && o && tmp[o - 1] == '.')
+         continue; /* collapse ".." */
+      tmp[o++] = uc_is_bad_name_char(c) ? '_' : (char)c;
+   }
+
+   /* No trailing dots or spaces (Windows) */
+   while (o && (tmp[o - 1] == '.' || tmp[o - 1] == ' '))
+      o--;
+   tmp[o] = '\0';
+
+   if (o > UC_NAME_MAX)
+   {
+      /* Shorten, keeping a short extension */
+      char  *dot  = strrchr(tmp, '.');
+      size_t elen = dot ? strlen(dot) : 0;
+      if (elen > 16)
+         elen = 0;
+      memmove(tmp + UC_NAME_MAX - elen, tmp + o - elen, elen + 1);
+      tmp[UC_NAME_MAX] = '\0';
+   }
+
+   if (!tmp[0])
+      strlcpy(tmp, "download.bin", sizeof(tmp));
+
+   strlcpy(name, tmp, size);
+}
+
+void url_content_cache_name(char *out, size_t len,
+      const char *fixed_url, const char *name_or_null)
+{
+   uint8_t digest[20];
+   char    hex[41];
+   char    name[UC_FIELD_LEN];
+
+   if (!len)
+      return;
+   if (!fixed_url)
+      fixed_url = "";
+
+   SHA1Digest((const uint8_t*)fixed_url, strlen(fixed_url), digest);
+   uc_hex(hex, digest, 8);
+
+   name[0] = '\0';
+   if (name_or_null && *name_or_null)
+      strlcpy(name, name_or_null, sizeof(name));
+   else
+   {
+      const char *auth = uc_authority(fixed_url);
+      const char *p    = auth ? uc_authority_end(auth) : fixed_url;
+      const char *end  = uc_path_end(p);
+      const char *seg  = p;
+      const char *q;
+
+      for (q = p; q < end; q++)
+         if (*q == '/')
+            seg = q + 1;
+      uc_pct_decode(name, sizeof(name), seg, (size_t)(end - seg));
+   }
+
+   uc_sanitize_name(name, sizeof(name));
+   snprintf(out, len, "%s_%s", hex, name);
+}
+
+/* Finds "param=" in a header at a parameter boundary */
+static const char *uc_find_header_param(const char *s, const char *param)
+{
+   const char *start = s;
+   const char *p     = s;
+
+   while ((p = uc_find_ci(p, param)))
+   {
+      char prev = (p == start) ? ';' : p[-1];
+      if (prev == ';' || prev == ':' || uc_is_space(prev))
+         return p + strlen(param);
+      p++;
+   }
+   return NULL;
+}
+
+bool url_content_name_from_disposition(char *out, size_t len,
+      const char *header_line)
+{
+   const char *v;
+   size_t      n = 0;
+
+   if (!len)
+      return false;
+   out[0] = '\0';
+   if (!header_line)
+      return false;
+
+   if ((v = uc_find_header_param(header_line, "filename*=")))
+   {
+      /* RFC 5987: charset'lang'pct-encoded */
+      const char *q1;
+      const char *end = v;
+      while (*end && *end != ';' && !uc_is_space(*end))
+         end++;
+      if (*v == '"' && end > v + 1 && end[-1] == '"')
+      {
+         v++;
+         end--;
+      }
+      q1 = v;
+      while (q1 < end && *q1 != '\'')
+         q1++;
+      if (q1 < end)
+      {
+         const char *q2 = q1 + 1;
+         while (q2 < end && *q2 != '\'')
+            q2++;
+         if (q2 < end)
+            v = q2 + 1;
+      }
+      uc_pct_decode(out, len, v, (size_t)(end - v));
+      if (out[0])
+         return true;
+   }
+
+   if ((v = uc_find_header_param(header_line, "filename=")))
+   {
+      if (*v == '"')
+      {
+         v++;
+         while (*v && *v != '"' && n + 1 < len)
+         {
+            if (*v == '\\' && v[1])
+               v++;
+            out[n++] = *v++;
+         }
+         out[n] = '\0';
+      }
+      else
+      {
+         const char *end = v;
+         while (*end && *end != ';' && !uc_is_space(*end))
+            end++;
+         uc_copy_n(out, len, v, (size_t)(end - v));
+      }
+   }
+
+   return out[0] != '\0';
+}
+
+/* ---------- auth headers ---------- */
+
+void url_content_basic_auth_header(char *out, size_t len,
+      const char *user, const char *pass)
+{
+   char  creds[1024];
+   int   n, flen = 0;
+   char *b64;
+
+   if (!len)
+      return;
+   out[0] = '\0';
+
+   n = snprintf(creds, sizeof(creds), "%s:%s",
+         user ? user : "", pass ? pass : "");
+   if (n < 0)
+      return;
+   if ((size_t)n >= sizeof(creds))
+      n = (int)sizeof(creds) - 1;
+
+   if (!(b64 = base64(creds, n, &flen)))
+      return;
+   snprintf(out, len, "Authorization: Basic %s\r\n", b64);
+   free(b64);
+}
+
+static void uc_md5_add(MD5_CTX *ctx, const char *s, bool colon)
+{
+   if (colon)
+      MD5_Update(ctx, ":", 1);
+   MD5_Update(ctx, s, (unsigned long)strlen(s));
+}
+
+static void uc_md5_done(MD5_CTX *ctx, char hex[33])
+{
+   unsigned char digest[16];
+   MD5_Final(digest, ctx);
+   uc_hex(hex, digest, 16);
+}
+
+/* Copies one challenge value (quoted or token) and returns the
+ * position after it */
+static const char *uc_digest_value(const char *p, char *out, size_t len)
+{
+   size_t n = 0;
+
+   if (*p == '"')
+   {
+      p++;
+      while (*p && *p != '"')
+      {
+         if (*p == '\\' && p[1])
+            p++;
+         if (n + 1 < len)
+            out[n++] = *p;
+         p++;
+      }
+      if (*p == '"')
+         p++;
+   }
+   else
+   {
+      while (*p && *p != ',' && !uc_is_space(*p))
+      {
+         if (n + 1 < len)
+            out[n++] = *p;
+         p++;
+      }
+   }
+   out[n] = '\0';
+   return p;
+}
+
+/* True if the comma separated list contains the token "auth" */
+static bool uc_qop_has_auth(const char *qop)
+{
+   const char *p = qop;
+   while (*p)
+   {
+      const char *end;
+      while (*p == ',' || uc_is_space(*p))
+         p++;
+      end = p;
+      while (*end && *end != ',' && !uc_is_space(*end))
+         end++;
+      if (end - p == 4 && uc_starts_with_ci(p, "auth"))
+         return true;
+      p = end;
+   }
+   return false;
+}
+
+static void uc_make_cnonce(char *out, size_t len)
+{
+   static unsigned counter = 0;
+   MD5_CTX         ctx;
+   char            seed[128];
+   char            hex[33];
+
+   if (uc_test_cnonce[0])
+   {
+      strlcpy(out, uc_test_cnonce, len);
+      return;
+   }
+
+   snprintf(seed, sizeof(seed), "%lu-%lu-%u-%d-%p",
+         (unsigned long)time(NULL), (unsigned long)clock(),
+         ++counter, rand(), (void*)&ctx);
+   MD5_Init(&ctx);
+   uc_md5_add(&ctx, seed, false);
+   uc_md5_done(&ctx, hex);
+   hex[16] = '\0';
+   strlcpy(out, hex, len);
+}
+
+void url_content_set_test_cnonce(const char *cnonce)
+{
+   if (cnonce)
+      strlcpy(uc_test_cnonce, cnonce, sizeof(uc_test_cnonce));
+   else
+      uc_test_cnonce[0] = '\0';
+}
+
+bool url_content_digest_auth_header(char *out, size_t len,
+      const char *www_authenticate, const char *method, const char *uri,
+      const char *user, const char *pass)
+{
+   char        realm[UC_FIELD_LEN];
+   char        nonce[UC_FIELD_LEN];
+   char        opaque[UC_FIELD_LEN];
+   char        qop[UC_FIELD_LEN];
+   char        algo[64];
+   char        cnonce[64];
+   char        ha1[33];
+   char        ha2[33];
+   char        resp[33];
+   char        extra[UC_FIELD_LEN * 2];
+   const char *nc        = "00000001";
+   const char *p;
+   bool        have_nonce = false;
+   bool        use_qop    = false;
+   bool        sess       = false;
+   MD5_CTX     ctx;
+   int         n;
+
+   if (!len)
+      return false;
+   out[0] = '\0';
+   if (!www_authenticate || !method || !uri)
+      return false;
+   if (!user)
+      user = "";
+   if (!pass)
+      pass = "";
+
+   realm[0] = nonce[0] = opaque[0] = qop[0] = algo[0] = '\0';
+
+   p = www_authenticate;
+   while (uc_is_space(*p))
+      p++;
+   if (uc_starts_with_ci(p, "www-authenticate:"))
+      p += 17;
+   while (uc_is_space(*p))
+      p++;
+   if (!uc_starts_with_ci(p, "digest") || !uc_is_space(p[6]))
+      return false;
+   p += 6;
+
+   for (;;)
+   {
+      const char *name;
+      size_t      nlen;
+      char        dummy[UC_FIELD_LEN];
+
+      while (*p == ',' || uc_is_space(*p))
+         p++;
+      if (!*p)
+         break;
+
+      name = p;
+      while (*p && *p != '=' && *p != ',' && !uc_is_space(*p))
+         p++;
+      nlen = (size_t)(p - name);
+      while (uc_is_space(*p))
+         p++;
+      if (*p != '=')
+         continue; /* bare token, ignore */
+      p++;
+      while (uc_is_space(*p))
+         p++;
+
+#define UC_IS_PARAM(s) (nlen == sizeof(s) - 1 && uc_starts_with_ci(name, s))
+      if (UC_IS_PARAM("realm"))
+         p = uc_digest_value(p, realm, sizeof(realm));
+      else if (UC_IS_PARAM("nonce"))
+      {
+         p          = uc_digest_value(p, nonce, sizeof(nonce));
+         have_nonce = true;
+      }
+      else if (UC_IS_PARAM("opaque"))
+         p = uc_digest_value(p, opaque, sizeof(opaque));
+      else if (UC_IS_PARAM("qop"))
+         p = uc_digest_value(p, qop, sizeof(qop));
+      else if (UC_IS_PARAM("algorithm"))
+         p = uc_digest_value(p, algo, sizeof(algo));
+      else
+         p = uc_digest_value(p, dummy, sizeof(dummy));
+#undef UC_IS_PARAM
+   }
+
+   if (!have_nonce || !nonce[0])
+      return false;
+
+   if (algo[0])
+   {
+      if (uc_starts_with_ci(algo, "md5-sess") && !algo[8])
+         sess = true;
+      else if (!(uc_starts_with_ci(algo, "md5") && !algo[3]))
+         return false;
+   }
+
+   if (qop[0])
+   {
+      if (!uc_qop_has_auth(qop))
+         return false; /* auth-int only: not supported */
+      use_qop = true;
+   }
+
+   uc_make_cnonce(cnonce, sizeof(cnonce));
+
+   MD5_Init(&ctx);
+   uc_md5_add(&ctx, user,  false);
+   uc_md5_add(&ctx, realm, true);
+   uc_md5_add(&ctx, pass,  true);
+   uc_md5_done(&ctx, ha1);
+
+   if (sess)
+   {
+      MD5_Init(&ctx);
+      uc_md5_add(&ctx, ha1,    false);
+      uc_md5_add(&ctx, nonce,  true);
+      uc_md5_add(&ctx, cnonce, true);
+      uc_md5_done(&ctx, ha1);
+   }
+
+   MD5_Init(&ctx);
+   uc_md5_add(&ctx, method, false);
+   uc_md5_add(&ctx, uri,    true);
+   uc_md5_done(&ctx, ha2);
+
+   MD5_Init(&ctx);
+   uc_md5_add(&ctx, ha1,   false);
+   uc_md5_add(&ctx, nonce, true);
+   if (use_qop)
+   {
+      uc_md5_add(&ctx, nc,     true);
+      uc_md5_add(&ctx, cnonce, true);
+      uc_md5_add(&ctx, "auth", true);
+   }
+   uc_md5_add(&ctx, ha2, true);
+   uc_md5_done(&ctx, resp);
+
+   extra[0] = '\0';
+   if (use_qop)
+      snprintf(extra, sizeof(extra),
+            "qop=auth, nc=%s, cnonce=\"%s\", ", nc, cnonce);
+   else if (sess)
+      snprintf(extra, sizeof(extra), "cnonce=\"%s\", ", cnonce);
+
+   n = snprintf(out, len,
+         "Authorization: Digest username=\"%s\", realm=\"%s\", "
+         "nonce=\"%s\", uri=\"%s\", %s%s%s%sresponse=\"%s\"%s%s%s\r\n",
+         user, realm, nonce, uri,
+         algo[0] ? "algorithm=" : "", algo, algo[0] ? ", " : "",
+         extra, resp,
+         opaque[0] ? ", opaque=\"" : "", opaque, opaque[0] ? "\"" : "");
+
+   if (n < 0 || (size_t)n >= len)
+   {
+      out[0] = '\0';
+      return false;
+   }
+   return true;
+}
+
+/* ---------- content sniffing ---------- */
+
+bool url_content_looks_like_html(const uint8_t *data, size_t len)
+{
+   size_t i = 0;
+
+   if (!data)
+      return false;
+   if (len > 512)
+      len = 512;
+
+   if (len >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF)
+      i = 3;
+   while (i < len && uc_is_space((char)data[i]))
+      i++;
+
+   if (len - i >= 14)
+   {
+      static const char doctype[] = "<!doctype html";
+      size_t k;
+      for (k = 0; k < 14; k++)
+         if (uc_lower((char)data[i + k]) != doctype[k])
+            break;
+      if (k == 14)
+         return true;
+   }
+   if (len - i >= 5)
+   {
+      static const char html[] = "<html";
+      size_t k;
+      for (k = 0; k < 5; k++)
+         if (uc_lower((char)data[i + k]) != html[k])
+            break;
+      if (k == 5)
+         return true;
+   }
+   return false;
+}
+
+#endif /* HAVE_NETWORKING */
