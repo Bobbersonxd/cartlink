@@ -431,8 +431,34 @@ static void rm_tree(const char *dir)
       printf("warning: could not remove %s\n", dir);
 }
 
+/* Number of POSTs serve.py's fake xauthn endpoint has received. Each
+ * call uses a new URL so the fetch cache never answers it. */
+static int login_posts(void)
+{
+   static int n = 0;
+   char u[256];
+   char cache[512];
+   char out[1024];
+   char buf[32];
+   FILE *f;
+   size_t got;
+
+   snprintf(u, sizeof(u), "/xauthn/count?n=%d", ++n);
+   new_cache(cache, sizeof(cache), "count");
+   if (fetch(u, cache, NULL, NULL, out, sizeof(out), NULL, 0)
+         != URL_FETCH_OK)
+      return -1;
+   if (!(f = fopen(out, "rb")))
+      return -1;
+   got = fread(buf, 1, sizeof(buf) - 1, f);
+   fclose(f);
+   buf[got] = '\0';
+   return atoi(buf);
+}
+
 static void test_archive_login(void)
 {
+   int posts_before;
    char u[256];
    char access[64];
    char secret[64];
@@ -474,11 +500,18 @@ static void test_archive_login(void)
    EXPECT_STR(a2, "ACCESSKEY");
    EXPECT_STR(s2, "SECRETKEY");
 
-   /* A redirect is not followed (the password is never re-sent). */
+   /* A redirect is not followed (the password is never re-sent):
+    * the 302 is the answer, and the login endpoint it points at sees
+    * no new POST. */
+   posts_before = login_posts();
+   EXPECT(posts_before > 0);
    url(u, sizeof(u), "/xauthn/redirect?op=login");
    url_archive_org_set_test_url(u);
    EXPECT(!url_archive_org_login("bob+ia@example.com", "p&ss w=rd",
          access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
+   EXPECT_STR(err, "server answered 302");
+   EXPECT_STR(access, "");
+   EXPECT(login_posts() == posts_before);
 
    /* Nothing listening: a clean failure. */
    url_archive_org_set_test_url("http://127.0.0.1:1/xauthn/?op=login");

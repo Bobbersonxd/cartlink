@@ -31,6 +31,18 @@ RETRO_BEGIN_DECLS
  * mp3, ogg, flac, wav, m3u8). */
 bool url_content_is_downloadable(const char *path);
 
+/* Command-line gate: true if the content argument should be downloaded
+ * before loading. Always false when first_pass is false: only the
+ * first argument parse is the real command line; later parses are
+ * RetroArch's own content loads (menu, history, netplay) and must
+ * behave as upstream. Also false if it is not downloadable, if the core's file
+ * name (core_path) contains "ffmpeg" or "mpv" in any case (media cores
+ * keep every URL, even extensionless streams), and, when no core is
+ * given, if builtin_player is true (the built-in media player takes
+ * URLs, as before). */
+bool url_content_cli_should_fetch(bool first_pass, const char *content,
+      const char *core_path, bool builtin_player);
+
 /* Rewrites share links (Google Drive, Dropbox, OneDrive, archive.org)
  * into direct-download links. Other URLs are copied unchanged. */
 void url_content_fix_link(char *out, size_t len, const char *url);

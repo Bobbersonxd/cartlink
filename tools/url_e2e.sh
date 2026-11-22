@@ -8,9 +8,14 @@
 #   Run 0: a local file through the normal path (regression check)
 #   Run 1: a URL on the command line is downloaded, cached and runs
 #   Run 2: the same URL again is a cache hit (no new request)
-#   Run L: a URL that needs a login exits non-zero with a hint
+#   Run L: a URL that needs a login exits 1 with a hint
+#   Run S: the same URL with a saved login in url_logins.cfg downloads
 #   Run 3: netplay, host and client both loading the same URL
 #   Run 4: a media URL (live.mp4) still takes the old media path
+#   Run M: an extensionless stream URL with a media core (-L ...ffmpeg...)
+#          is not fetched
+#   Run R: a later content load (menu > History) of an http path does
+#          not fetch and does not exit RetroArch
 #   Run 5: ./configure --disable-networking still builds
 #
 # Usage: tools/url_e2e.sh
@@ -41,8 +46,10 @@ cleanup()
       kill "$p" 2>/dev/null
       wait "$p" 2>/dev/null
    done
+   PIDS=""
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'cleanup; echo "url_e2e: interrupted, work dir kept: $WORK"; exit 130' INT TERM
 
 pass() { echo "PASS: $*"; }
 fail() { echo "FAIL: $*"; FAILS=$((FAILS + 1)); }
@@ -246,6 +253,29 @@ else
    fail "run L: serve.py did not start"
 fi
 
+# ------------------------------------------------- run S: saved login
+
+PS=$(make_profile saved)
+# Logins live next to the config file; host 127.0.0.1 -> 127_0_0_1.
+cat > "$PS/url_logins.cfg" <<EOF
+url_login_127_0_0_1_user = "bob"
+url_login_127_0_0_1_pass = "pw"
+EOF
+chmod 600 "$PS/url_logins.cfg"
+ra "$PS" "$WORK/runS.log" -L "$CORE" \
+   "http://127.0.0.1:$AUTH_PORT/basic/game.sfc" --max-frames=30
+rc=$?
+cached=$(ls "$PS/assets/url_cache/"*_game.sfc 2>/dev/null | head -n 1)
+# The .sfc is not an NES game, so fceumm refusing it afterwards is fine:
+# this run only checks that the saved login downloaded it.
+if [ -n "$cached" ] && [ "$(wc -c < "$cached")" -eq 8192 ] \
+      && grep -q "\[URL\] Downloaded" "$WORK/runS.log" \
+      && ! grep -q "Login needed" "$WORK/runS.log" "$WORK/runS.log.out"; then
+   pass "run S: saved login used, $(basename "$cached") downloaded"
+else
+   fail "run S: saved login (exit $rc, see $WORK/runS.log)"
+fi
+
 # ------------------------------------------------- run 3: netplay
 
 NP_PORT=$(free_port)
@@ -293,6 +323,76 @@ else
    fail "run 4: media URL went through url_fetch (see $WORK/run4.log)"
 fi
 
+# ------------------------------------------------- run M: media core
+
+# The core file only has to exist for -L to take it (it is not a real
+# core; loading it fails afterwards, which is fine here).
+mkdir -p "$WORK/mediacore"
+: > "$WORK/mediacore/ffmpeg_libretro.so"
+PM=$(make_profile mediacore)
+ra "$PM" "$WORK/runM.log" -L "$WORK/mediacore/ffmpeg_libretro.so" \
+   "http://127.0.0.1:$HTTP_PORT/stream" --max-frames=30
+rc=$?
+if grep -q "ffmpeg_libretro.so" "$WORK/runM.log" \
+      && ! grep -q "\[URL\]" "$WORK/runM.log" \
+      && [ ! -d "$PM/assets/url_cache" ] \
+      && [ "$(gets "$WORK/server.log" /stream)" = 0 ]; then
+   pass "run M: extensionless URL with a media core not fetched (exit $rc)"
+else
+   fail "run M: media core URL was fetched (see $WORK/runM.log)"
+fi
+
+# ------------------------------------------------- run R: later load
+
+# RetroArch starts with no content (the command-line pass sees no URL),
+# then the menu loads a History entry whose path is an http link. That
+# load is a later pass: it must not fetch and must not exit RetroArch.
+# Upstream refuses a playlist path that is not a file before it ever
+# re-parses; the gate for passes that do get there (cli_active) is
+# covered by test_url_content (url_content_cli_should_fetch).
+PR=$(make_profile reload)
+CMD_PORT=$(free_port)
+mkdir -p "$PR/hist"
+cat >> "$PR/append.cfg" <<EOF
+history_list_enable = "true"
+content_history_directory = "$PR/hist"
+network_cmd_enable = "true"
+network_cmd_port = "$CMD_PORT"
+EOF
+cat > "$PR/hist/content_history.lpl" <<EOF
+{"version":"1.5","default_core_path":"","default_core_name":"","label_display_mode":0,"right_thumbnail_mode":0,"left_thumbnail_mode":0,"sort_mode":0,"items":[{"path":"http://127.0.0.1:$HTTP_PORT/history.nes","label":"history","core_path":"$CORE","core_name":"FCEUmm","crc32":"DETECT","db_name":""}]}
+EOF
+HOME=$PR/home XDG_CONFIG_HOME=$PR/home/.config \
+   $LIMIT $NICE "$RA" --config="$PR/retroarch.cfg" \
+   --appendconfig="$PR/append.cfg" --verbose --log-file="$WORK/runR.log" \
+   </dev/null >"$WORK/runR.log.out" 2>&1 &
+RPID=$!
+PIDS="$PIDS $RPID"
+python3 -c 'import time; time.sleep(3)'
+# Main menu: Load Core, Load Content, History -> open it, open the
+# entry, Run. Each command is sent 3 times 5 ms apart (one UDP packet
+# alone is sometimes missed between polls).
+for c in MENU_DOWN MENU_DOWN MENU_B MENU_B MENU_B; do
+   python3 -c 'import socket,sys,time
+s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+for i in range(3):
+   s.sendto(sys.argv[2].encode(),("127.0.0.1",int(sys.argv[1]))); time.sleep(0.005)' \
+      "$CMD_PORT" "$c"
+   python3 -c 'import time; time.sleep(0.7)'
+done
+python3 -c 'import time; time.sleep(3)'
+if kill -0 "$RPID" 2>/dev/null; then alive=1; else alive=0; fi
+kill "$RPID" 2>/dev/null
+wait "$RPID" 2>/dev/null
+if [ $alive = 1 ] \
+      && grep -q "Failed to load from playlist" "$WORK/runR.log" \
+      && ! grep -q "\[URL\]" "$WORK/runR.log" \
+      && [ "$(gets "$WORK/server.log" /history.nes)" = 0 ]; then
+   pass "run R: History load of an http path: no fetch, RetroArch still running"
+else
+   fail "run R: later load (alive=$alive, see $WORK/runR.log)"
+fi
+
 # ------------------------------------------------- run 5: no networking
 
 if [ "${URL_E2E_SKIP_NONET:-0}" = 1 ]; then
@@ -313,9 +413,13 @@ else
    rm -rf "$NN"
 fi
 
+cleanup
 if [ $FAILS -eq 0 ]; then
    echo "url_e2e: all runs passed"
+   case "$WORK" in
+      */url_e2e.*) rm -rf "$WORK" ;;
+   esac
    exit 0
 fi
-echo "url_e2e: $FAILS run(s) failed"
+echo "url_e2e: $FAILS run(s) failed, work dir kept: $WORK"
 exit 1

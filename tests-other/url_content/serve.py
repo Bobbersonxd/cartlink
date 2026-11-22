@@ -17,6 +17,7 @@ REALM = "retro"
 NONCE = "dcd98b7102dd2f0e8b11d0f600bfb0c093"
 BIG = 300 * 1024 * 1024
 HUGE = 3 * 1024 * 1024 * 1024
+LOGIN_POSTS = 0   # POSTs that reached /xauthn/?op=login
 
 
 def md5(s):
@@ -108,6 +109,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path != "/xauthn/?op=login":
             self.send_body(404, b"not found", "text/plain")
             return
+        global LOGIN_POSTS
+        LOGIN_POSTS += 1
         if self.headers.get("Content-Type") != \
                 "application/x-www-form-urlencoded":
             self.send_body(400, b"bad content type", "text/plain")
@@ -136,6 +139,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path
         port = self.server.server_address[1]
+        if path.startswith("/xauthn/count"):
+            self.send_body(200, ("%d" % LOGIN_POSTS).encode(), "text/plain")
+            return
         if path == "/echoauth":
             auth = self.headers.get("Authorization")
             body = ("auth:" + auth).encode() if auth else b"none"

@@ -945,6 +945,33 @@ bool url_content_looks_like_html(const uint8_t *data, size_t len)
    return false;
 }
 
+/* Case-insensitive substring test */
+static bool uc_contains_ci(const char *s, const char *needle)
+{
+   for (; *s; s++)
+      if (uc_starts_with_ci(s, needle))
+         return true;
+   return false;
+}
+
+bool url_content_cli_should_fetch(bool first_pass, const char *content,
+      const char *core_path, bool builtin_player)
+{
+   const char *name;
+   const char *p;
+
+   if (!first_pass || !url_content_is_downloadable(content))
+      return false;
+   if (!core_path || !*core_path)
+      return !builtin_player;
+
+   name = core_path;
+   for (p = core_path; *p; p++)
+      if (*p == '/' || *p == '\\')
+         name = p + 1;
+   return !uc_contains_ci(name, "ffmpeg") && !uc_contains_ci(name, "mpv");
+}
+
 /* ---------- form encoding ---------- */
 
 bool url_content_form_encode(char *out, size_t len, const char *s)

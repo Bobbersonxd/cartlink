@@ -551,6 +551,44 @@ static void test_archive_login_parse(void)
          access, sizeof(access), secret, sizeof(secret), NULL, 0));
 }
 
+static void test_cli_should_fetch(void)
+{
+   const char *nes = "/cores/fceumm_libretro.so";
+
+   /* A game link with a game core: fetch. */
+   EXPECT(url_content_cli_should_fetch(true, "http://h/game.nes", nes, false));
+   EXPECT(url_content_cli_should_fetch(true, "https://h/game.nes", nes, true));
+   EXPECT(url_content_cli_should_fetch(true, "http://h/dl?id=3", nes, false));
+   /* Not a link, or a media link: never. */
+   EXPECT(!url_content_cli_should_fetch(true, "/roms/game.nes", nes, false));
+   EXPECT(!url_content_cli_should_fetch(true, "http://h/live.mp4", nes, false));
+   EXPECT(!url_content_cli_should_fetch(true, "rtmp://h/live", nes, false));
+   EXPECT(!url_content_cli_should_fetch(true, NULL, nes, false));
+   /* A media core keeps every URL, even extensionless streams. */
+   EXPECT(!url_content_cli_should_fetch(true, "http://h:8080/stream",
+         "/cores/ffmpeg_libretro.so", false));
+   EXPECT(!url_content_cli_should_fetch(true, "http://h/x.ts",
+         "C:\\cores\\FFMPEG_libretro.dll", false));
+   EXPECT(!url_content_cli_should_fetch(true, "http://h/stream",
+         "/cores/mpv_libretro.so", false));
+   /* Only the core's file name counts, not its folder. */
+   EXPECT(url_content_cli_should_fetch(true, "http://h/game.nes",
+         "/opt/mpv-stuff/fceumm_libretro.so", false));
+   /* Later parses (menu, history, netplay reloads): never, whatever
+    * the path, core or player setting. */
+   EXPECT(!url_content_cli_should_fetch(false, "http://h/game.nes", nes,
+         false));
+   EXPECT(!url_content_cli_should_fetch(false, "https://h/dl?id=3", NULL,
+         false));
+   EXPECT(!url_content_cli_should_fetch(false, "http://h/game.nes", "",
+         true));
+   /* No core: only when the built-in player would not take it. */
+   EXPECT(url_content_cli_should_fetch(true, "http://h/game.nes", NULL, false));
+   EXPECT(url_content_cli_should_fetch(true, "http://h/game.nes", "", false));
+   EXPECT(!url_content_cli_should_fetch(true, "http://h/stream", NULL, true));
+   EXPECT(!url_content_cli_should_fetch(true, "http://h/stream", "", true));
+}
+
 int main(void)
 {
    test_fix_link();
@@ -565,6 +603,7 @@ int main(void)
    test_logins();
    test_form_encode();
    test_archive_login_parse();
+   test_cli_should_fetch();
 
    if (g_failures)
    {

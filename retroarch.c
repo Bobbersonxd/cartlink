@@ -7675,13 +7675,21 @@ static bool retroarch_parse_input_and_config(
       const char *content_path     = (const char*)argv[optind];
 #ifdef HAVE_NETWORKING
       char url_cached_path[PATH_MAX_LENGTH];
+      bool url_builtin_player      = false;
+#if defined(HAVE_FFMPEG) || defined(HAVE_MPV)
+      url_builtin_player = settings->bools.multimedia_builtin_mediaplayer_enable;
+#endif
 
-      /* "Load from URL": a downloadable http(s) link is fetched into
-       * the URL cache now (blocking) and the cached file is loaded as
-       * if it had been given. Media links (mp4, m3u8, ...) are left
-       * alone for the media player, as before. */
+      /* "Load from URL": on the real command-line pass only
+       * (cli_active, i.e. upstream's first_run), a downloadable http(s)
+       * link is fetched into the URL cache now (blocking) and the
+       * cached file is loaded as if it had been given. Later passes
+       * (every menu, history, playlist or netplay content load rebuilds
+       * argv and parses again) behave exactly as upstream. Media links
+       * and media cores keep the old path. */
       if (     subsystem_path_is_empty
-            && url_content_is_downloadable(content_path))
+            && url_content_cli_should_fetch(cli_active, content_path,
+                  path_get(RARCH_PATH_CORE), url_builtin_player))
       {
          if (!task_url_content_fetch_cli(content_path,
                   url_cached_path, sizeof(url_cached_path)))
