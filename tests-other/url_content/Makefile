@@ -90,8 +90,10 @@ CERTS := certs/ca.pem certs/srv.pem certs/srv.key
 
 all: $(BIN) $(FETCH_BIN)
 
+# --wrap: test_url_content.c sees every rename (counts them, acts like
+# Windows, fails chosen ones).
 $(BIN): $(SRCS) ../../network/url_content.h ../../network/url_catalog.h ../../network/url_logins.h ../../network/url_servers.h ../../frontend/clipboard.h
-	$(CC) $(CFLAGS) -o $@ $(SRCS)
+	$(CC) $(CFLAGS) -o $@ $(SRCS) -Wl,--wrap=filestream_rename
 
 test: $(BIN)
 	./$(BIN)

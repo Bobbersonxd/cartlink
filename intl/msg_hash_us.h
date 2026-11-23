@@ -396,6 +396,10 @@ MSG_HASH(
    "Showing the first 4096 items."
    )
 MSG_HASH(
+   MSG_URL_CATALOG_OPENED,
+   "Game list: %s"
+   )
+MSG_HASH(
    MSG_URL_SERVER_REMOVE,
    "Remove this server"
    )

@@ -264,8 +264,20 @@ static void url_task_handler(retro_task_t *task)
    switch (d->result)
    {
       case URL_FETCH_OK:
-      case URL_FETCH_CACHED:
+      case URL_FETCH_CACHED: /* loading the game shows its own notice */
+         break;
       case URL_FETCH_CATALOG: /* the callback opens it in the menu */
+         {
+            /* Replace "Downloading <host>", which would otherwise stay
+             * up over the list that just opened. */
+            char title[256];
+            url_catalog_title(title, sizeof(title),
+                  string_is_empty(d->catalog.base)
+                  ? d->url : d->catalog.base);
+            snprintf(msg, sizeof(msg),
+                  msg_hash_to_str(MSG_URL_CATALOG_OPENED), title);
+            url_task_finish_msg(task, msg, false);
+         }
          break;
       case URL_FETCH_NEED_LOGIN:
          if (d->has_login)

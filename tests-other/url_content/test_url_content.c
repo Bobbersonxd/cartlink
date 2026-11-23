@@ -48,6 +48,35 @@ static int g_failures = 0;
    } \
 } while (0)
 
+/* Test seam: the build links with -Wl,--wrap=filestream_rename, so
+ * every rename the code under test makes comes through here. It can
+ * count renames, act like Windows (no rename over an existing file),
+ * and fail chosen calls (bit i = fail the i-th call since the reset),
+ * e.g. as when antivirus holds a freshly written file. */
+int __real_filestream_rename(const char *old_path, const char *new_path);
+static int      g_rename_calls   = 0;
+static bool     g_rename_windows = false;
+static unsigned g_rename_fail    = 0;
+
+static void rename_seam_reset(bool windows, unsigned fail)
+{
+   g_rename_calls   = 0;
+   g_rename_windows = windows;
+   g_rename_fail    = fail;
+}
+
+int __wrap_filestream_rename(const char *old_path, const char *new_path);
+int __wrap_filestream_rename(const char *old_path, const char *new_path)
+{
+   struct stat st;
+   int i = g_rename_calls++;
+   if (i < 32 && (g_rename_fail & (1u << i)))
+      return -1;
+   if (g_rename_windows && stat(new_path, &st) == 0)
+      return -1;
+   return __real_filestream_rename(old_path, new_path);
+}
+
 static bool ends_with(const char *s, const char *suffix)
 {
    size_t ls = strlen(s);
@@ -1084,8 +1113,177 @@ static void servers_cleanup(const char *dir, const char *path)
    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
    unlink(path);
    unlink(tmp);
+   snprintf(tmp, sizeof(tmp), "%s.bak", path);
+   unlink(tmp);
    rmdir(dir);
    url_servers_set_path(NULL);
+   rename_seam_reset(false, 0);
+}
+
+static bool file_has(const char *path, const char *text)
+{
+   char  buf[4096];
+   size_t n;
+   FILE *f = fopen(path, "rb");
+   if (!f)
+      return false;
+   n = fread(buf, 1, sizeof(buf) - 1, f);
+   fclose(f);
+   buf[n] = '\0';
+   return strstr(buf, text) != NULL;
+}
+
+/* Re-adding the server that is already first (the game list does it
+ * on every folder open) must not touch the file at all. */
+static void test_servers_add_top_no_write(void)
+{
+   char dir[] = "/tmp/url_servers_test_XXXXXX";
+   char path[512];
+   char out[256];
+   struct stat a, b;
+   if (!servers_temp(dir, path, sizeof(path)))
+      return;
+   EXPECT(url_servers_add("https://a.example/"));
+   EXPECT(url_servers_add("https://b.example/"));
+   EXPECT(stat(path, &a) == 0);
+   rename_seam_reset(false, 0);
+   EXPECT(url_servers_add("https://b.example/"));
+   EXPECT(url_servers_add("https://u:p@b.example/"));
+   EXPECT(g_rename_calls == 0);
+   EXPECT(stat(path, &b) == 0);
+   EXPECT(a.st_ino == b.st_ino);
+   EXPECT(url_servers_count() == 2);
+   /* Moving another one to the top still saves. */
+   EXPECT(url_servers_add("https://a.example/"));
+   EXPECT(g_rename_calls == 1);
+   EXPECT(url_servers_get(0, out, sizeof(out)));
+   EXPECT_STR(out, "https://a.example/");
+   url_servers_set_path(path);
+   EXPECT(url_servers_get(0, out, sizeof(out)));
+   EXPECT_STR(out, "https://a.example/");
+   servers_cleanup(dir, path);
+}
+
+/* Windows rules: no rename over an existing file. */
+static void test_servers_windows_replace(void)
+{
+   char dir[] = "/tmp/url_servers_test_XXXXXX";
+   char path[512];
+   char side[600];
+   char out[256];
+   if (!servers_temp(dir, path, sizeof(path)))
+      return;
+   rename_seam_reset(true, 0);
+   EXPECT(url_servers_add("https://a.example/"));
+   EXPECT(url_servers_add("https://b.example/"));
+   EXPECT(url_servers_count() == 2);
+   snprintf(side, sizeof(side), "%s.tmp", path);
+   EXPECT(!file_exists(side));
+   snprintf(side, sizeof(side), "%s.bak", path);
+   EXPECT(!file_exists(side));
+   url_servers_set_path(path);
+   EXPECT(url_servers_count() == 2);
+   EXPECT(url_servers_get(0, out, sizeof(out)));
+   EXPECT_STR(out, "https://b.example/");
+
+   /* Second rename fails (file held): the old file is put back. Calls:
+    * 0 tmp->file (Windows refuses), 1 file->bak, 2 tmp->file (held),
+    * 3 bak->file. */
+   rename_seam_reset(true, 1u << 2);
+   EXPECT(!url_servers_add("https://c.example/"));
+   EXPECT(url_servers_count() == 2);
+   EXPECT(file_has(path, "https://b.example/"));
+   EXPECT(!file_has(path, "https://c.example/"));
+   snprintf(side, sizeof(side), "%s.tmp", path);
+   EXPECT(!file_exists(side));
+   url_servers_set_path(path);
+   EXPECT(url_servers_count() == 2);
+
+   /* Putting it back fails too: neither rename works. Both copies stay
+    * on disk and the next start uses the new one. */
+   rename_seam_reset(true, (1u << 2) | (1u << 3));
+   EXPECT(!url_servers_add("https://c.example/"));
+   EXPECT(!file_exists(path));
+   snprintf(side, sizeof(side), "%s.tmp", path);
+   EXPECT(file_exists(side));
+   snprintf(side, sizeof(side), "%s.bak", path);
+   EXPECT(file_exists(side));
+   rename_seam_reset(false, 0);
+   url_servers_set_path(path);
+   EXPECT(url_servers_count() == 3);
+   EXPECT(url_servers_get(0, out, sizeof(out)));
+   EXPECT_STR(out, "https://c.example/");
+   EXPECT(file_exists(path)); /* put back in place on load */
+
+   /* Only the old copy (.bak) left: it is used. */
+   EXPECT(file_exists(side));
+   unlink(path);
+   url_servers_set_path(path);
+   EXPECT(url_servers_count() == 2);
+   EXPECT(url_servers_get(0, out, sizeof(out)));
+   EXPECT_STR(out, "https://b.example/");
+   EXPECT(file_exists(path));
+   EXPECT(!file_exists(side));
+   servers_cleanup(dir, path);
+}
+
+/* Same rules for the logins file. */
+static void test_logins_windows_replace(void)
+{
+   char dir[]   = "/tmp/url_logins_test_XXXXXX";
+   char path[512];
+   char side[600];
+   char user[64];
+   char pass[64];
+   if (!mkdtemp(dir))
+   {
+      EXPECT(!"mkdtemp");
+      return;
+   }
+   snprintf(path, sizeof(path), "%s/url_logins.cfg", dir);
+   url_logins_set_path(path);
+   rename_seam_reset(true, 0);
+   EXPECT(url_logins_set("a.example", "alice", "pw1"));
+   EXPECT(url_logins_set("b.example", "bob", "pw2"));
+   EXPECT(url_logins_get("a.example", user, sizeof(user), pass, sizeof(pass)));
+   EXPECT(url_logins_get("b.example", user, sizeof(user), pass, sizeof(pass)));
+   EXPECT_STR(user, "bob");
+
+   /* Second rename held: the old file is put back. */
+   rename_seam_reset(true, 1u << 2);
+   EXPECT(!url_logins_set("c.example", "carol", "pw3"));
+   EXPECT(url_logins_get("b.example", user, sizeof(user), pass, sizeof(pass)));
+   EXPECT(!url_logins_get("c.example", user, sizeof(user), pass, sizeof(pass)));
+   snprintf(side, sizeof(side), "%s.tmp", path);
+   EXPECT(!file_exists(side));
+
+   /* Putting it back fails too: no login is lost. */
+   rename_seam_reset(true, (1u << 2) | (1u << 3));
+   EXPECT(!url_logins_set("c.example", "carol", "pw3"));
+   EXPECT(!file_exists(path));
+   rename_seam_reset(false, 0);
+   EXPECT(url_logins_get("a.example", user, sizeof(user), pass, sizeof(pass)));
+   EXPECT_STR(pass, "pw1");
+   EXPECT(url_logins_get("c.example", user, sizeof(user), pass, sizeof(pass)));
+   EXPECT_STR(user, "carol");
+   EXPECT(file_exists(path));
+#ifdef __linux__
+   {
+      struct stat st;
+      EXPECT(stat(path, &st) == 0 && (st.st_mode & 0777) == 0600);
+   }
+#endif
+
+   /* Forget removes every copy. */
+   snprintf(side, sizeof(side), "%s.bak", path);
+   EXPECT(file_exists(side));
+   EXPECT(url_logins_forget_all());
+   EXPECT(!file_exists(side));
+   snprintf(side, sizeof(side), "%s.tmp", path);
+   EXPECT(!file_exists(side));
+   EXPECT(!file_exists(path));
+   rmdir(dir);
+   url_logins_set_path(NULL);
 }
 
 static void test_servers_add_get(void)
@@ -1322,6 +1520,9 @@ int main(void)
    test_servers_strip_userinfo();
    test_servers_cap();
    test_servers_root();
+   test_servers_add_top_no_write();
+   test_servers_windows_replace();
+   test_logins_windows_replace();
 
    if (g_failures)
    {

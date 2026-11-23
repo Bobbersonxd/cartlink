@@ -79,15 +79,74 @@ static bool url_logins_value_ok(const char *s)
    return s && !strpbrk(s, "\"\r\n");
 }
 
+/* <path><suffix> into out. False if it does not fit. */
+static bool url_logins_side(char *out, size_t len, const char *suffix)
+{
+   return strlcpy(out, url_logins_path, len) < len
+      && strlcat(out, suffix, len) < len;
+}
+
+/* Moves tmp over the file. Windows cannot rename over an existing
+ * file, so there the old file is first moved aside to .bak and put
+ * back if the second rename fails (e.g. antivirus holding the new
+ * file). If even that fails, .tmp (and .bak) stay on disk and
+ * url_logins_open picks them up: saved logins are never lost. */
+static bool url_logins_replace(const char *tmp, const char *bak)
+{
+   bool moved = false;
+
+   if (filestream_rename(tmp, url_logins_path) != 0)
+   {
+      if (path_is_valid(url_logins_path))
+      {
+         if (path_is_valid(bak))
+            filestream_delete(bak);
+         if (filestream_rename(url_logins_path, bak) != 0)
+         {
+            /* Old file untouched. */
+            filestream_delete(tmp);
+            return false;
+         }
+         moved = true;
+      }
+      if (filestream_rename(tmp, url_logins_path) != 0)
+      {
+         if (moved && filestream_rename(bak, url_logins_path) == 0)
+            filestream_delete(tmp);
+         return false;
+      }
+   }
+   if (path_is_valid(bak))
+      filestream_delete(bak);
+   return true;
+}
+
 /* Existing file, or an empty config if there is none yet. NULL if the
  * file exists but cannot be read (never clobber it). */
 static config_file_t *url_logins_open(bool create)
 {
-   if (string_is_empty(url_logins_path))
+   char        tmp[sizeof(url_logins_path) + 8];
+   char        bak[sizeof(url_logins_path) + 8];
+   const char *src = url_logins_path;
+
+   if (     string_is_empty(url_logins_path)
+         || !url_logins_side(tmp, sizeof(tmp), ".tmp")
+         || !url_logins_side(bak, sizeof(bak), ".bak"))
       return NULL;
-   if (path_is_valid(url_logins_path))
-      return config_file_new_from_path_to_string(url_logins_path);
-   return create ? config_file_new_alloc() : NULL;
+   /* A failed Windows replace can leave only the new logins (.tmp) or
+    * the old ones (.bak). Use them and put them back in place. */
+   if (!path_is_valid(src))
+   {
+      if (path_is_valid(tmp))
+         src = tmp;
+      else if (path_is_valid(bak))
+         src = bak;
+      else
+         return create ? config_file_new_alloc() : NULL;
+      if (filestream_rename(src, url_logins_path) == 0)
+         src = url_logins_path;
+   }
+   return config_file_new_from_path_to_string(src);
 }
 
 /* Owner-only file mode (POSIX). True elsewhere. */
@@ -110,12 +169,13 @@ static bool url_logins_tighten(const char *path, bool create)
 static bool url_logins_write(config_file_t *conf)
 {
    char tmp[sizeof(url_logins_path) + 8];
+   char bak[sizeof(url_logins_path) + 8];
 
    if (!(conf->flags & CONF_FILE_FLG_MODIFIED))
       return url_logins_tighten(url_logins_path, false);
 
-   if (strlcpy(tmp, url_logins_path, sizeof(tmp)) >= sizeof(tmp)
-         || strlcat(tmp, ".tmp", sizeof(tmp)) >= sizeof(tmp))
+   if (     !url_logins_side(tmp, sizeof(tmp), ".tmp")
+         || !url_logins_side(bak, sizeof(bak), ".bak"))
       return false;
    if (path_is_valid(tmp))
       filestream_delete(tmp);
@@ -126,17 +186,7 @@ static bool url_logins_write(config_file_t *conf)
       filestream_delete(tmp);
       return false;
    }
-   if (filestream_rename(tmp, url_logins_path) != 0)
-   {
-      /* Windows cannot rename over an existing file. */
-      filestream_delete(url_logins_path);
-      if (filestream_rename(tmp, url_logins_path) != 0)
-      {
-         filestream_delete(tmp);
-         return false;
-      }
-   }
-   return true;
+   return url_logins_replace(tmp, bak);
 }
 
 static bool url_logins_get_pair(const char *key_a, char *a, size_t alen,
@@ -205,16 +255,22 @@ bool url_logins_set_archive_keys(const char *access, const char *secret)
 bool url_logins_forget_all(void)
 {
    char tmp[sizeof(url_logins_path) + 8];
+   char bak[sizeof(url_logins_path) + 8];
+   bool side_ok;
    if (string_is_empty(url_logins_path))
       return false;
-   /* A .tmp left by a crash mid-write holds secrets too. */
-   if (     strlcpy(tmp, url_logins_path, sizeof(tmp)) < sizeof(tmp)
-         && strlcat(tmp, ".tmp", sizeof(tmp)) < sizeof(tmp)
-         && path_is_valid(tmp))
+   /* A .tmp left by a crash mid-write, or a .bak left by a failed
+    * Windows replace, holds secrets too. */
+   side_ok = url_logins_side(tmp, sizeof(tmp), ".tmp")
+          && url_logins_side(bak, sizeof(bak), ".bak");
+   if (side_ok && path_is_valid(tmp))
       filestream_delete(tmp);
+   if (side_ok && path_is_valid(bak))
+      filestream_delete(bak);
    if (path_is_valid(url_logins_path))
       filestream_delete(url_logins_path);
-   return !path_is_valid(url_logins_path);
+   return !path_is_valid(url_logins_path)
+      && (!side_ok || (!path_is_valid(tmp) && !path_is_valid(bak)));
 }
 
 #endif /* HAVE_NETWORKING */

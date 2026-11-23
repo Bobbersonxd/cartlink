@@ -130,6 +130,48 @@ void url_servers_root(char *out, size_t len, const char *catalog_url)
    }
 }
 
+/* <path><suffix> into out. False if it does not fit. */
+static bool url_servers_side(char *out, size_t len, const char *suffix)
+{
+   return strlcpy(out, url_servers_path, len) < len
+      && strlcat(out, suffix, len) < len;
+}
+
+/* Moves tmp over the file. Windows cannot rename over an existing
+ * file, so there the old file is first moved aside to .bak and put
+ * back if the second rename fails (e.g. antivirus holding the new
+ * file). If even that fails, .tmp (and .bak) stay on disk and
+ * url_servers_load picks them up: the list is never lost. */
+static bool url_servers_replace(const char *tmp, const char *bak)
+{
+   bool moved = false;
+
+   if (filestream_rename(tmp, url_servers_path) != 0)
+   {
+      if (path_is_valid(url_servers_path))
+      {
+         if (path_is_valid(bak))
+            filestream_delete(bak);
+         if (filestream_rename(url_servers_path, bak) != 0)
+         {
+            /* Old file untouched. */
+            filestream_delete(tmp);
+            return false;
+         }
+         moved = true;
+      }
+      if (filestream_rename(tmp, url_servers_path) != 0)
+      {
+         if (moved && filestream_rename(bak, url_servers_path) == 0)
+            filestream_delete(tmp);
+         return false;
+      }
+   }
+   if (path_is_valid(bak))
+      filestream_delete(bak);
+   return true;
+}
+
 static void url_servers_load(void)
 {
    void    *buf = NULL;
@@ -137,10 +179,29 @@ static void url_servers_load(void)
    char    *line;
    char    *next;
 
+   char        tmp[sizeof(url_servers_path) + 8];
+   char        bak[sizeof(url_servers_path) + 8];
+   const char *src = url_servers_path;
+
    url_servers_n = 0;
-   if (string_is_empty(url_servers_path) || !path_is_valid(url_servers_path))
+   if (     string_is_empty(url_servers_path)
+         || !url_servers_side(tmp, sizeof(tmp), ".tmp")
+         || !url_servers_side(bak, sizeof(bak), ".bak"))
       return;
-   if (!filestream_read_file(url_servers_path, &buf, &len) || !buf)
+   /* A failed Windows replace can leave only the new list (.tmp) or the
+    * old one (.bak). Use it and put it back in place. */
+   if (!path_is_valid(src))
+   {
+      if (path_is_valid(tmp))
+         src = tmp;
+      else if (path_is_valid(bak))
+         src = bak;
+      else
+         return;
+      if (filestream_rename(src, url_servers_path) == 0)
+         src = url_servers_path;
+   }
+   if (!filestream_read_file(src, &buf, &len) || !buf)
       return;
 
    for (line = (char*)buf; line && url_servers_n < URL_SERVERS_MAX;
@@ -190,20 +251,20 @@ bool url_servers_get(size_t i, char *out, size_t len)
 }
 
 /* Writes the n entries of url_servers_next to <path>.tmp, renames it
- * over the file, then makes them the live list. On failure the file
- * and the live list stay as they were. */
+ * over the file, then makes them the live list. On failure the live
+ * list stays as it was and no saved list is lost (see replace). */
 static bool url_servers_commit(size_t n)
 {
    char    tmp[sizeof(url_servers_path) + 8];
+   char    bak[sizeof(url_servers_path) + 8];
    char   *data;
    size_t  size = 0;
    size_t  i;
    bool    ok;
 
-   if (string_is_empty(url_servers_path))
-      return false;
-   if (     strlcpy(tmp, url_servers_path, sizeof(tmp)) >= sizeof(tmp)
-         || strlcat(tmp, ".tmp", sizeof(tmp)) >= sizeof(tmp))
+   if (     string_is_empty(url_servers_path)
+         || !url_servers_side(tmp, sizeof(tmp), ".tmp")
+         || !url_servers_side(bak, sizeof(bak), ".bak"))
       return false;
 
    if (!(data = (char*)malloc(n * URL_SERVERS_URL_LEN + 1)))
@@ -226,16 +287,8 @@ static bool url_servers_commit(size_t n)
       filestream_delete(tmp);
       return false;
    }
-   if (filestream_rename(tmp, url_servers_path) != 0)
-   {
-      /* Windows cannot rename over an existing file. */
-      filestream_delete(url_servers_path);
-      if (filestream_rename(tmp, url_servers_path) != 0)
-      {
-         filestream_delete(tmp);
-         return false;
-      }
-   }
+   if (!url_servers_replace(tmp, bak))
+      return false;
 
    for (i = 0; i < n; i++)
       strlcpy(url_servers_list[i], url_servers_next[i], URL_SERVERS_URL_LEN);
@@ -252,6 +305,10 @@ bool url_servers_add(const char *root_url)
    if (string_is_empty(url_servers_path)
          || !url_servers_clean(clean, sizeof(clean), root_url))
       return false;
+   /* Already first: nothing changes, so the file is not rewritten
+    * (the game list re-adds its server on every folder open). */
+   if (url_servers_n > 0 && string_is_equal(url_servers_list[0], clean))
+      return true;
 
    strlcpy(url_servers_next[0], clean, URL_SERVERS_URL_LEN);
    for (i = 0; i < url_servers_n && n < URL_SERVERS_MAX; i++)
