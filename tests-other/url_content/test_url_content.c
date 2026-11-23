@@ -23,6 +23,7 @@
 #include "../../network/url_content.h"
 #include "../../network/url_logins.h"
 #include "../../network/url_catalog.h"
+#include "../../network/url_servers.h"
 #include "../../frontend/clipboard.h"
 
 static int g_checks   = 0;
@@ -1044,6 +1045,229 @@ static void test_catalog_parent(void)
    EXPECT(!url_catalog_parent(out, sizeof(out), "not a url"));
 }
 
+/* Saved Servers: each test gets its own temp file. */
+static bool servers_temp(char *dir, char *path, size_t len)
+{
+   if (!mkdtemp(dir))
+   {
+      g_checks++;
+      g_failures++;
+      printf("FAIL %s:%d: mkdtemp\n", __FILE__, __LINE__);
+      return false;
+   }
+   snprintf(path, len, "%s/url_servers.cfg", dir);
+   url_servers_set_path(path);
+   return true;
+}
+
+static void servers_cleanup(const char *dir, const char *path)
+{
+   char tmp[600];
+   snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+   unlink(path);
+   unlink(tmp);
+   rmdir(dir);
+   url_servers_set_path(NULL);
+}
+
+static void test_servers_add_get(void)
+{
+   char dir[] = "/tmp/url_servers_test_XXXXXX";
+   char path[512];
+   char out[256];
+   if (!servers_temp(dir, path, sizeof(path)))
+      return;
+   EXPECT(url_servers_count() == 0);
+   EXPECT(!url_servers_get(0, out, sizeof(out)));
+   EXPECT(url_servers_add("https://a.example/"));
+   EXPECT(url_servers_add("https://b.example:8443/"));
+   EXPECT(url_servers_count() == 2);
+   EXPECT(url_servers_get(0, out, sizeof(out)));
+   EXPECT_STR(out, "https://b.example:8443/");
+   EXPECT(url_servers_get(1, out, sizeof(out)));
+   EXPECT_STR(out, "https://a.example/");
+   EXPECT(!url_servers_get(2, out, sizeof(out)));
+   /* Not a URL, or a value the line format cannot hold. */
+   EXPECT(!url_servers_add(""));
+   EXPECT(!url_servers_add(NULL));
+   EXPECT(!url_servers_add("not a url"));
+   EXPECT(!url_servers_add("https://x/\nhttps://y/"));
+   EXPECT(url_servers_count() == 2);
+   servers_cleanup(dir, path);
+   /* No path: everything is off. */
+   EXPECT(url_servers_count() == 0);
+   EXPECT(!url_servers_add("https://a.example/"));
+}
+
+static void test_servers_dedupe(void)
+{
+   char dir[] = "/tmp/url_servers_test_XXXXXX";
+   char path[512];
+   char out[256];
+   if (!servers_temp(dir, path, sizeof(path)))
+      return;
+   EXPECT(url_servers_add("https://a.example/"));
+   EXPECT(url_servers_add("https://a.example/"));
+   EXPECT(url_servers_count() == 1);
+   EXPECT(url_servers_add("https://b.example/"));
+   EXPECT(url_servers_add("https://a.example/"));
+   EXPECT(url_servers_count() == 2);
+   EXPECT(url_servers_get(0, out, sizeof(out)));
+   EXPECT_STR(out, "https://a.example/");
+   EXPECT(url_servers_get(1, out, sizeof(out)));
+   EXPECT_STR(out, "https://b.example/");
+   /* Same server with a login in the link is still the same entry. */
+   EXPECT(url_servers_add("https://u:p@b.example/"));
+   EXPECT(url_servers_count() == 2);
+   EXPECT(url_servers_get(0, out, sizeof(out)));
+   EXPECT_STR(out, "https://b.example/");
+   servers_cleanup(dir, path);
+}
+
+static void test_servers_remove(void)
+{
+   char dir[] = "/tmp/url_servers_test_XXXXXX";
+   char path[512];
+   char out[256];
+   if (!servers_temp(dir, path, sizeof(path)))
+      return;
+   EXPECT(url_servers_add("https://a.example/"));
+   EXPECT(url_servers_add("https://b.example/"));
+   EXPECT(url_servers_add("https://c.example/"));
+   EXPECT(!url_servers_remove(3));
+   EXPECT(url_servers_remove(1));
+   EXPECT(url_servers_count() == 2);
+   EXPECT(url_servers_get(0, out, sizeof(out)));
+   EXPECT_STR(out, "https://c.example/");
+   EXPECT(url_servers_get(1, out, sizeof(out)));
+   EXPECT_STR(out, "https://a.example/");
+   /* Removal is saved. */
+   url_servers_set_path(path);
+   EXPECT(url_servers_count() == 2);
+   EXPECT(url_servers_remove(0));
+   EXPECT(url_servers_remove(0));
+   EXPECT(url_servers_count() == 0);
+   EXPECT(!url_servers_remove(0));
+   url_servers_set_path(path);
+   EXPECT(url_servers_count() == 0);
+   servers_cleanup(dir, path);
+}
+
+static void test_servers_persist(void)
+{
+   char dir[] = "/tmp/url_servers_test_XXXXXX";
+   char path[512];
+   char tmp[600];
+   char out[256];
+   if (!servers_temp(dir, path, sizeof(path)))
+      return;
+   EXPECT(!file_exists(path));
+   EXPECT(url_servers_add("https://a.example/"));
+   EXPECT(url_servers_add("http://192.168.1.5:8080/"));
+   EXPECT(file_exists(path));
+   snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+   EXPECT(!file_exists(tmp));
+   url_servers_set_path(NULL);
+   EXPECT(url_servers_count() == 0);
+   url_servers_set_path(path);
+   EXPECT(url_servers_count() == 2);
+   EXPECT(url_servers_get(0, out, sizeof(out)));
+   EXPECT_STR(out, "http://192.168.1.5:8080/");
+   EXPECT(url_servers_get(1, out, sizeof(out)));
+   EXPECT_STR(out, "https://a.example/");
+   /* Hand-edited file: blank lines, CRLF and junk are skipped. */
+   {
+      FILE *f = fopen(path, "wb");
+      if (f)
+      {
+         fputs("\r\nhttps://x.example/\r\n\nnot a url\nhttps://u:p@y.example/\n"
+               "https://x.example/\n", f);
+         fclose(f);
+      }
+   }
+   url_servers_set_path(path);
+   EXPECT(url_servers_count() == 2);
+   EXPECT(url_servers_get(0, out, sizeof(out)));
+   EXPECT_STR(out, "https://x.example/");
+   EXPECT(url_servers_get(1, out, sizeof(out)));
+   EXPECT_STR(out, "https://y.example/");
+   servers_cleanup(dir, path);
+}
+
+static void test_servers_strip_userinfo(void)
+{
+   char dir[] = "/tmp/url_servers_test_XXXXXX";
+   char path[512];
+   char out[256];
+   char line[256];
+   bool leaked = false;
+   FILE *f;
+   if (!servers_temp(dir, path, sizeof(path)))
+      return;
+   EXPECT(url_servers_add("https://u:p@h/"));
+   EXPECT(url_servers_get(0, out, sizeof(out)));
+   EXPECT_STR(out, "https://h/");
+   EXPECT(url_servers_add("http://name:se@cret@h2:81/games/"));
+   EXPECT(url_servers_get(0, out, sizeof(out)));
+   EXPECT_STR(out, "http://h2:81/games/");
+   if ((f = fopen(path, "rb")))
+   {
+      while (fgets(line, sizeof(line), f))
+         if (strstr(line, "u:p") || strstr(line, "@") || strstr(line, "name"))
+            leaked = true;
+      fclose(f);
+   }
+   else
+      leaked = true;
+   EXPECT(!leaked);
+   servers_cleanup(dir, path);
+}
+
+static void test_servers_cap(void)
+{
+   char dir[] = "/tmp/url_servers_test_XXXXXX";
+   char path[512];
+   char url[64];
+   char out[256];
+   int i;
+   if (!servers_temp(dir, path, sizeof(path)))
+      return;
+   for (i = 0; i < URL_SERVERS_MAX + 1; i++)
+   {
+      snprintf(url, sizeof(url), "https://s%d.example/", i);
+      EXPECT(url_servers_add(url));
+   }
+   EXPECT(url_servers_count() == URL_SERVERS_MAX);
+   EXPECT(url_servers_get(0, out, sizeof(out)));
+   EXPECT_STR(out, "https://s64.example/");
+   EXPECT(url_servers_get(URL_SERVERS_MAX - 1, out, sizeof(out)));
+   EXPECT_STR(out, "https://s1.example/");
+   url_servers_set_path(path);
+   EXPECT(url_servers_count() == URL_SERVERS_MAX);
+   servers_cleanup(dir, path);
+}
+
+static void test_servers_root(void)
+{
+   char out[256];
+   url_servers_root(out, sizeof(out), "https://h:8443/games/NES/");
+   EXPECT_STR(out, "https://h:8443/");
+   url_servers_root(out, sizeof(out), "https://u:p@Games.Example/a/b.gb");
+   EXPECT_STR(out, "https://games.example/");
+   url_servers_root(out, sizeof(out), "http://h");
+   EXPECT_STR(out, "http://h/");
+   url_servers_root(out, sizeof(out), "http://h?x=1");
+   EXPECT_STR(out, "http://h/");
+   url_servers_root(out, sizeof(out), "http://[::1]:8080/x/");
+   EXPECT_STR(out, "http://[::1]:8080/");
+   url_servers_root(out, sizeof(out), "not a url");
+   EXPECT_STR(out, "");
+   url_servers_root(out, sizeof(out), "https:///x");
+   EXPECT_STR(out, "");
+   url_servers_root(out, 8, "https://long.example/");
+   EXPECT_STR(out, "");
+}
+
 int main(void)
 {
    test_fix_link();
@@ -1072,6 +1296,13 @@ int main(void)
    test_catalog_parse_empty();
    test_catalog_parse_cap();
    test_catalog_parent();
+   test_servers_add_get();
+   test_servers_dedupe();
+   test_servers_remove();
+   test_servers_persist();
+   test_servers_strip_userinfo();
+   test_servers_cap();
+   test_servers_root();
 
    if (g_failures)
    {

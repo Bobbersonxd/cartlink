@@ -1,5 +1,5 @@
 # Unit tests for network/url_content.c (pure logic, no network) and
-# network/url_logins.c (temp file under /tmp).
+# network/url_logins.c + network/url_servers.c (temp files under /tmp).
 # Usage: make -C tests-other/url_content test
 #        make -C tests-other/url_content fetch-test
 #        (network/url_fetch.c against serve.py on free 127.0.0.1 ports,
@@ -23,6 +23,7 @@ SRCS := test_url_content.c \
         $(LRC)/streams/memory_stream.c \
         $(LRC)/encodings/encoding_crc32.c \
         ../../network/url_logins.c \
+        ../../network/url_servers.c \
         $(LRC)/file/config_file.c \
         $(LRC)/file/file_path.c \
         $(LRC)/file/file_path_io.c \
@@ -89,7 +90,7 @@ CERTS := certs/ca.pem certs/srv.pem certs/srv.key
 
 all: $(BIN) $(FETCH_BIN)
 
-$(BIN): $(SRCS) ../../network/url_content.h ../../network/url_catalog.h ../../network/url_logins.h ../../frontend/clipboard.h
+$(BIN): $(SRCS) ../../network/url_content.h ../../network/url_catalog.h ../../network/url_logins.h ../../network/url_servers.h ../../frontend/clipboard.h
 	$(CC) $(CFLAGS) -o $@ $(SRCS)
 
 test: $(BIN)
