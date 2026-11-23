@@ -230,12 +230,52 @@ $(WIN_BIN): $(WIN_SRCS) ../../network/url_logins.h ../../network/url_content.h
 	$(WIN_CC) -std=gnu99 -O1 -g -Wall -Wno-unused-parameter -I$(LRC)/include -DHAVE_NETWORKING \
 	   -o $@ $(WIN_SRCS) -lcrypt32 -static
 
+# test_ca_path_win.exe: the bundled cacert.pem next to the program,
+# from a folder with a long non-ASCII name (net_socket_ssl_mbed.c and
+# the bundled mbedTLS, built for Windows into obj-win/).
+WINCA_BIN  := obj-win/test_ca_path_win.exe
+WINCA_SRCS := test_ca_path_win.c \
+        $(LRC)/net/net_socket_ssl_mbed.c \
+        $(LRC)/net/net_socket.c \
+        $(LRC)/net/net_compat.c \
+        $(LRC)/features/features_cpu.c \
+        $(LRC)/file/file_path.c \
+        $(LRC)/file/file_path_io.c \
+        $(LRC)/streams/file_stream.c \
+        $(LRC)/vfs/vfs_implementation.c \
+        $(LRC)/string/stdstring.c \
+        $(LRC)/compat/fopen_utf8.c \
+        $(LRC)/compat/compat_posix_string.c \
+        $(LRC)/compat/compat_strl.c \
+        $(LRC)/time/rtime.c \
+        $(LRC)/encodings/encoding_utf.c
+WIN_MBED_OBJS := $(patsubst $(MBED_DIR)/%.c,obj-win/mbed/%.o,$(MBED_SRCS))
+WIN_MBED_LIB  := obj-win/mbed/libmbed.a
+WIN_AR        ?= x86_64-w64-mingw32-ar
+# 20 Cyrillic letters (40 UTF-8 bytes, 20 UTF-16 units), as in
+# test_ca_path_win.c.
+WINCA_DIR := $(shell printf '\320\220\320\273\320\265\320\272\321\201\320\260\320\275\320\264\321\200\320\237\320\265\321\202\321\200\320\276\320\262\320\270\321\207\320\241\320\270\320\264')
+
+obj-win/mbed/%.o: $(MBED_DIR)/%.c
+	@mkdir -p obj-win/mbed
+	@$(WIN_CC) -std=gnu99 -O1 -w -I$(MBED_DIR) -I$(LRC)/include -c -o $@ $<
+
+$(WIN_MBED_LIB): $(WIN_MBED_OBJS)
+	@$(WIN_AR) rcs $@ $(WIN_MBED_OBJS)
+
+# RARCH_INTERNAL: also checks file_path.c's fill_pathname_application_dir.
+$(WINCA_BIN): $(WINCA_SRCS) $(WIN_MBED_LIB) $(LRC)/include/net/net_socket_ssl.h
+	@mkdir -p obj-win
+	$(WIN_CC) -std=gnu99 -O1 -g -Wall -Wno-unused-parameter -I$(LRC)/include -I$(MBED_DIR) \
+	   -DHAVE_SSL -DHAVE_BUILTINMBEDTLS -DRARCH_INTERNAL \
+	   -o $@ $(WINCA_SRCS) $(WIN_MBED_LIB) -lws2_32 -lcrypt32 -ladvapi32 -static
+
 # Wine runs with its own prefix in WIN_TMP (never ~/.wine), no display,
 # no debug output; the logins file goes to a fresh folder there.
 win-test:
 	@if ! command -v $(WIN_CC) >/dev/null 2>&1; then \
 	   echo "SKIP: win-test ($(WIN_CC) not installed)"; exit 0; fi; \
-	$(MAKE) --no-print-directory $(WIN_BIN) || exit 1; \
+	$(MAKE) --no-print-directory $(WIN_BIN) $(WINCA_BIN) $(CERTS) || exit 1; \
 	if ! command -v wine >/dev/null 2>&1; then \
 	   echo "SKIP: win-test run (wine not installed; $(WIN_BIN) built)"; exit 0; fi; \
 	mkdir -p "$(WIN_TMP)/prefix" || exit 1; \
@@ -244,8 +284,16 @@ win-test:
 	   WINEPREFIX="$(abspath $(WIN_TMP))/prefix" \
 	   WINEDLLOVERRIDES="mscoree,mshtml=" \
 	   wine ./$(WIN_BIN) "Z:$$data" 2>/dev/null; rc=$$?; \
+	cadir="$$data/$(WINCA_DIR)"; \
+	mkdir -p "$$cadir" && cp $(WINCA_BIN) "$$cadir/cartlink.exe" && \
+	{ echo "# CARTLINK-TEST-REAL-BUNDLE"; cat certs/ca.pem; } > "$$cadir/cacert.pem" && \
+	{ echo "# PLANTED"; cat certs/ca.pem; } > "$$data/cacert.pem" || exit 1; \
+	env -u DISPLAY -u WAYLAND_DISPLAY WINEDEBUG=-all \
+	   WINEPREFIX="$(abspath $(WIN_TMP))/prefix" \
+	   WINEDLLOVERRIDES="mscoree,mshtml=" \
+	   wine "$$cadir/cartlink.exe" 2>/dev/null; rc2=$$?; \
 	WINEPREFIX="$(abspath $(WIN_TMP))/prefix" wineserver -k >/dev/null 2>&1; \
-	exit $$rc
+	[ $$rc -eq 0 ] && [ $$rc2 -eq 0 ]
 
 tls-online-test: $(FETCH_BIN)
 	./$(FETCH_BIN) online ../../media/cacert.pem

@@ -19,6 +19,7 @@
  * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
+/* Modified by Cartlink contributors, 2026. */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1347,9 +1348,12 @@ size_t fill_pathname_application_path(char *s, size_t len)
 #if defined(_WIN32)
 #ifdef LEGACY_WIN32
       DWORD ret = GetModuleFileNameA(NULL, s, len);
+      if (ret >= len) /* cut short: still terminated inside s */
+         ret = (DWORD)(len - 1);
 #else
       wchar_t wstr[PATH_MAX_LENGTH] = {0};
       DWORD ret = GetModuleFileNameW(NULL, wstr, ARRAY_SIZE(wstr));
+      *s = '\0';
       if (*wstr)
       {
          char *str = utf16_to_utf8_string_alloc(wstr);
@@ -1359,6 +1363,8 @@ size_t fill_pathname_application_path(char *s, size_t len)
             free(str);
          }
       }
+      /* ret counts UTF-16 units, not the UTF-8 bytes in s. */
+      ret = (DWORD)strlen(s);
 #endif
       s[ret] = '\0';
       return ret;

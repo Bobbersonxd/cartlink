@@ -196,6 +196,12 @@ int ssl_socket_get_verify_error(void *state_data)
 
 void ssl_socket_set_ca_bundle_override(const char *path) { }
 void ssl_socket_set_ca_bundle_file(const char *path) { }
+bool ssl_socket_test_default_ca_bundle_path(char *s, size_t len)
+{
+   if (s && len)
+      s[0] = '\0';
+   return false;
+}
 
 static bool process_inner(struct ssl_state *state, bool blocking)
 {

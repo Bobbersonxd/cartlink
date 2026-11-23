@@ -23,6 +23,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <compat/strl.h>
 #include <file/file_path.h>
 #include <streams/file_stream.h>
 #include <net/net_compat.h>
@@ -64,6 +65,7 @@
 #define SSL_WIN32_CERT_STORE
 #include <windows.h>
 #include <wincrypt.h>
+#include <encodings/utf.h>
 #ifdef _MSC_VER
 #pragma comment(lib, "crypt32.lib")
 #endif
@@ -133,27 +135,79 @@ static void ssl_parse_pem_file(mbedtls_x509_crt *chain, const char *path)
    free(buf);
 }
 
+/* The default bundled list: cacert.pem next to the program. False
+ * (and no bundle at all) if that path can't be told for sure: a wrong
+ * folder could hold a planted cacert.pem. */
+static bool ssl_default_bundle_path(char *s, size_t len)
+{
+#if defined(SSL_WIN32_CERT_STORE)
+   /* The full UTF-16 path, never cut: a shortened path would point
+    * into a parent folder (e.g. Downloads). */
+   const DWORD wlen = 32768;
+   wchar_t *w       = (wchar_t*)malloc(wlen * sizeof(wchar_t));
+   char *u          = NULL;
+   char *slash;
+   bool ok          = false;
+   DWORD n;
+   if (!w)
+      return false;
+   n = GetModuleFileNameW(NULL, w, wlen);
+   if (n > 0 && n < wlen)
+   {
+      w[n] = 0;
+      u    = utf16_to_utf8_string_alloc(w);
+   }
+   free(w);
+   if (!u)
+      return false;
+   slash = strrchr(u, '\\');
+   if (!slash)
+      slash = strrchr(u, '/');
+   if (slash)
+   {
+      slash[1] = '\0';
+      ok = strlen(u) + strlen("cacert.pem") < len;
+      if (ok)
+      {
+         strlcpy(s, u, len);
+         strlcat(s, "cacert.pem", len);
+      }
+   }
+   free(u);
+   return ok;
+#elif !defined(RARCH_CONSOLE) && defined(RARCH_INTERNAL)
+   char dir[1024];
+   dir[0] = '\0';
+   fill_pathname_application_dir(dir, sizeof(dir));
+   if (!dir[0])
+      return false;
+   fill_pathname_join_special(s, dir, "cacert.pem", len);
+   return true;
+#else
+   return false;
+#endif
+}
+
+bool ssl_socket_test_default_ca_bundle_path(char *s, size_t len)
+{
+   if (!s || !len)
+      return false;
+   s[0] = '\0';
+   return ssl_default_bundle_path(s, len);
+}
+
 /* Appends the bundled Mozilla CA list (cacert.pem, shipped next to
  * the program in the release archives). */
 static void ssl_load_bundled_ca(mbedtls_x509_crt *chain)
 {
+   char path[4096];
    if (ssl_ca_bundled_set)
    {
       ssl_parse_pem_file(chain, ssl_ca_bundled);
       return;
    }
-#if !defined(RARCH_CONSOLE) && defined(RARCH_INTERNAL)
-   {
-      char dir[1024];
-      char path[1024];
-      dir[0] = '\0';
-      fill_pathname_application_dir(dir, sizeof(dir));
-      if (!dir[0])
-         return;
-      fill_pathname_join_special(path, dir, "cacert.pem", sizeof(path));
+   if (ssl_default_bundle_path(path, sizeof(path)))
       ssl_parse_pem_file(chain, path);
-   }
-#endif
 }
 
 /* Appends the trusted CA certificates to chain: the system's first,

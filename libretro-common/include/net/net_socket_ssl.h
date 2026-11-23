@@ -61,6 +61,11 @@ void ssl_socket_set_ca_bundle_override(const char *path);
  * "" turns it off. */
 void ssl_socket_set_ca_bundle_file(const char *path);
 
+/* Test hook: the default bundled list's path (cacert.pem next to the
+ * program), as it would be loaded. False if it can't be told, in
+ * which case no bundled list is loaded. */
+bool ssl_socket_test_default_ca_bundle_path(char *s, size_t len);
+
 int ssl_socket_connect(void *state_data, void *data, bool timeout_enable, bool nonblock);
 
 int ssl_socket_send_all_blocking(void *state_data, const void *data_, size_t len, bool no_signal);
