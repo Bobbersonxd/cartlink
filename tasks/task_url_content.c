@@ -86,6 +86,7 @@ typedef struct url_task_data
    bool started;
    bool done;
    bool has_login;
+   bool anyway;               /* "Download anyway (unsafe)" was chosen */
    char url[URL_TASK_URL_MAX];
    char host[URL_TASK_HOST_MAX];
    char cache_dir[PATH_MAX_LENGTH];
@@ -108,7 +109,7 @@ static struct
 } url_task_st;
 
 static bool url_task_push(const char *url,
-      const char *user, const char *pass);
+      const char *user, const char *pass, bool anyway);
 
 static void url_task_notify(const char *msg, enum message_queue_category cat)
 {
@@ -167,13 +168,13 @@ static void url_task_progress_cb(size_t done, size_t total, void *ud)
 /* The download itself. Touches only d. */
 static void url_task_fetch(url_task_data_t *d)
 {
-   d->result = url_fetch_to_cache(d->url, d->cache_dir,
+   d->result = url_fetch_to_cache_ex(d->url, d->cache_dir,
          d->has_login ? d->user : NULL,
          d->has_login ? d->pass : NULL,
          d->out_path, sizeof(d->out_path),
          d->challenge, sizeof(d->challenge),
          d->err, sizeof(d->err),
-         url_task_progress_cb, d, &d->catalog);
+         url_task_progress_cb, d, &d->catalog, d->anyway);
 #ifdef HAVE_THREADS
    slock_lock(d->lock);
 #endif
@@ -203,6 +204,8 @@ static enum msg_hash_enums url_task_blocked_msg(enum url_fetch_result res)
          return MSG_URL_SAFETY_PROGRAM;
       case URL_FETCH_BLOCKED_TOO_BIG:
          return MSG_URL_SAFETY_TOO_BIG;
+      case URL_FETCH_BLOCKED_FINGERPRINT:
+         return MSG_URL_FINGERPRINT_MISMATCH;
       default:
          return MSG_URL_SAFETY_ARCHIVE;
    }
@@ -314,8 +317,13 @@ static void url_task_handler(retro_task_t *task)
       case URL_FETCH_BLOCKED_PROGRAM:
       case URL_FETCH_BLOCKED_ARCHIVE:
       case URL_FETCH_BLOCKED_TOO_BIG:
+      case URL_FETCH_BLOCKED_FINGERPRINT:
          url_task_finish_msg(task,
                msg_hash_to_str(url_task_blocked_msg(d->result)), true);
+         break;
+      case URL_FETCH_CERT_INVALID: /* the callback offers the choice */
+         url_task_finish_msg(task,
+               msg_hash_to_str(MSG_URL_CERT_INVALID), false);
          break;
       case URL_FETCH_TOO_BIG:
       case URL_FETCH_FAILED:
@@ -353,7 +361,7 @@ static void url_task_pass_cb(void *userdata, const char *line)
       return;
    }
 
-   url_task_push(url_task_st.url, url_task_st.user, line);
+   url_task_push(url_task_st.url, url_task_st.user, line, false);
 
    /* The line is the dialog's own heap buffer; clear the password
     * before the input code frees it. */
@@ -581,6 +589,21 @@ static void url_task_callback(retro_task_t *task,
          url_task_dialog(MSG_URL_CONTENT_USERNAME_FOR, url_task_user_cb);
 #endif
          break;
+      case URL_FETCH_CERT_INVALID:
+         /* Only ever for a download without a login or a fingerprint
+          * (url_fetch_to_cache_ex): the user may take it unchecked,
+          * once, or cancel. Never decided here. */
+         RARCH_WARN("[URL] %s\n", d->err);
+#ifdef HAVE_MENU
+         if (!d->anyway && !d->has_login)
+         {
+            struct menu_state *menu_st = menu_state_get_ptr();
+            if (!(menu_st->flags & MENU_ST_FLAG_ALIVE))
+               retroarch_menu_running();
+            action_ok_url_cert_choice_push(d->url);
+         }
+#endif
+         break;
       default:
          RARCH_ERR("[URL] %s\n", d->err);
          break;
@@ -625,8 +648,9 @@ static bool url_task_cache_dir(char *out, size_t len)
 }
 
 static bool url_task_push(const char *url,
-      const char *user, const char *pass)
+      const char *user, const char *pass, bool anyway)
 {
+   char link[URL_TASK_URL_MAX];
    char fixed[URL_TASK_URL_MAX];
    char name[PATH_MAX_LENGTH];
    char title[PATH_MAX_LENGTH];
@@ -656,8 +680,12 @@ static bool url_task_push(const char *url,
    }
 
    strlcpy(d->url, url, sizeof(d->url));
-   /* Same host url_fetch uses for saved logins. */
-   url_content_fix_link(fixed, sizeof(fixed), url);
+   d->anyway = anyway;
+   /* Same host url_fetch uses for saved logins (the link without its
+    * fragment; a broken #sha256= is reported by the fetch). */
+   if (!url_content_split_fingerprint(link, sizeof(link), NULL, NULL, url))
+      strlcpy(link, url, sizeof(link));
+   url_content_fix_link(fixed, sizeof(fixed), link);
    url_content_host(d->host, sizeof(d->host), fixed);
    d->refs      = 1;   /* the task's reference */
    d->pct       = -1;
@@ -714,7 +742,12 @@ static bool url_task_push(const char *url,
 
 bool task_push_url_content_load(const char *url)
 {
-   return url_task_push(url, NULL, NULL);
+   return url_task_push(url, NULL, NULL, false);
+}
+
+bool task_push_url_content_load_anyway(const char *url)
+{
+   return url_task_push(url, NULL, NULL, true);
 }
 
 void task_url_content_clear_cache(void)
@@ -788,7 +821,12 @@ bool task_url_content_fetch_cli(const char *url,
    if (string_is_empty(url) || !out_path || !len)
       return false;
 
-   url_content_fix_link(fixed, sizeof(fixed), url);
+   {
+      char link[URL_TASK_URL_MAX];
+      if (!url_content_split_fingerprint(link, sizeof(link), NULL, NULL, url))
+         strlcpy(link, url, sizeof(link));
+      url_content_fix_link(fixed, sizeof(fixed), link);
+   }
    url_content_host(host, sizeof(host), fixed);
 
    if (!url_task_cache_dir(cache_dir, sizeof(cache_dir)))
@@ -823,7 +861,11 @@ bool task_url_content_fetch_cli(const char *url,
       case URL_FETCH_BLOCKED_PROGRAM:
       case URL_FETCH_BLOCKED_ARCHIVE:
       case URL_FETCH_BLOCKED_TOO_BIG:
+      case URL_FETCH_BLOCKED_FINGERPRINT:
          url_cli_error(msg_hash_to_str(url_task_blocked_msg(res)));
+         break;
+      case URL_FETCH_CERT_INVALID: /* no "Download anyway" here */
+         url_cli_error(msg_hash_to_str(MSG_URL_CERT_INVALID));
          break;
       case URL_FETCH_CATALOG: /* game lists need the menu */
          url_cli_error(msg_hash_to_str(MSG_URL_CATALOG_CLI));

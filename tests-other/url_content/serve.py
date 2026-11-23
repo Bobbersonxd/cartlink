@@ -273,6 +273,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_body(200, body, "text/plain")
         elif path == "/xhost":
             self.redirect("http://127.0.0.2:%d/echoauth" % port)
+        elif path == "/xhost-s":
+            # Only meant for the https side: to a name the test
+            # certificate does not cover.
+            self.redirect("https://127.0.0.1:%d/game.sfc" % port)
         elif path == "/samehost":
             self.redirect("/basic/game.sfc")
         elif path == "/loop":

@@ -199,6 +199,36 @@ void sha256_hash(char *s, const uint8_t *in, size_t len)
       snprintf(s + 2 * i, 3, "%02x", (unsigned)shahash.u8[i]);
 }
 
+int sha256_calculate(const char *path, uint8_t digest[32])
+{
+   unsigned i;
+   struct sha256_ctx sha;
+   uint8_t buff[4096];
+   int64_t rv;
+   RFILE *fd = filestream_open(path,
+         RETRO_VFS_FILE_ACCESS_READ,
+         RETRO_VFS_FILE_ACCESS_HINT_NONE);
+
+   if (!fd)
+      return -1;
+
+   sha256_init(&sha);
+   while ((rv = filestream_read(fd, buff, sizeof(buff))) > 0)
+      sha256_chunk(&sha, buff, (size_t)rv);
+   filestream_close(fd);
+   if (rv < 0)
+      return -1;
+   sha256_final(&sha);
+   for (i = 0; i < 8; i++)
+   {
+      digest[4 * i]     = (uint8_t)(sha.h[i] >> 24);
+      digest[4 * i + 1] = (uint8_t)(sha.h[i] >> 16);
+      digest[4 * i + 2] = (uint8_t)(sha.h[i] >>  8);
+      digest[4 * i + 3] = (uint8_t)(sha.h[i]);
+   }
+   return 0;
+}
+
 #ifndef HAVE_ZLIB
 /* Zlib CRC32. */
 static const uint32_t crc32_hash_table[256] = {

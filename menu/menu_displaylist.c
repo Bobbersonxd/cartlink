@@ -13551,6 +13551,26 @@ bool menu_displaylist_ctl(enum menu_displaylist_ctl_state type,
                                   | MD_FLAG_NEED_PUSH;
             }
             break;
+         case DISPLAYLIST_URL_CERT_CHOICE:
+            /* info->path is the link; "Cancel" is first, so a quick
+             * press never downloads unchecked. */
+            menu_entries_clear(info->list);
+            if (menu_entries_append(info->list,
+                     msg_hash_to_str(MSG_URL_DOWNLOAD_CANCEL),
+                     msg_hash_to_str(MENU_ENUM_LABEL_URL_DOWNLOAD_CANCEL),
+                     MENU_ENUM_LABEL_URL_DOWNLOAD_CANCEL,
+                     MENU_SETTING_ACTION, 0, 0, NULL))
+               count++;
+            if (menu_entries_append(info->list,
+                     msg_hash_to_str(MSG_URL_DOWNLOAD_ANYWAY),
+                     msg_hash_to_str(MENU_ENUM_LABEL_URL_DOWNLOAD_ANYWAY),
+                     MENU_ENUM_LABEL_URL_DOWNLOAD_ANYWAY,
+                     MENU_SETTING_ACTION, 0, 0, NULL))
+               count++;
+            menu_st->selection_ptr = 0;
+            info->flags       |= MD_FLAG_NEED_REFRESH
+                               | MD_FLAG_NEED_PUSH;
+            break;
 #endif
          case DISPLAYLIST_CORE_CONTENT_DIRS_SUBDIR:
             {

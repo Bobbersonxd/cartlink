@@ -265,6 +265,7 @@ GENERIC_DEFERRED_PUSH(deferred_push_core_system_files_list,         DISPLAYLIST_
 GENERIC_DEFERRED_PUSH(deferred_push_lakka_list,                     DISPLAYLIST_LAKKA)
 GENERIC_DEFERRED_PUSH(deferred_push_url_catalog_list,               DISPLAYLIST_URL_CATALOG)
 GENERIC_DEFERRED_PUSH(deferred_push_url_servers_list,               DISPLAYLIST_URL_SERVERS)
+GENERIC_DEFERRED_PUSH(deferred_push_url_cert_choice,                DISPLAYLIST_URL_CERT_CHOICE)
 #endif
 
 #if defined(HAVE_LIBNX)
@@ -708,6 +709,7 @@ static int menu_cbs_init_bind_deferred_push_compare_label(
       {MENU_ENUM_LABEL_DEFERRED_DROPDOWN_BOX_LIST_NETPLAY_MITM_SERVER, deferred_push_dropdown_box_list_netplay_mitm_server},
       {MENU_ENUM_LABEL_DEFERRED_URL_CATALOG_LIST, deferred_push_url_catalog_list},
       {MENU_ENUM_LABEL_DEFERRED_URL_SERVERS_LIST, deferred_push_url_servers_list},
+      {MENU_ENUM_LABEL_DEFERRED_URL_CERT_CHOICE, deferred_push_url_cert_choice},
 #endif
       {MENU_ENUM_LABEL_DEFERRED_BROWSE_URL_LIST, deferred_push_browse_url_list},
       {MENU_ENUM_LABEL_DEFERRED_BROWSE_URL_START, deferred_push_browse_url_start},

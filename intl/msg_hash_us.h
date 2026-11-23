@@ -420,6 +420,22 @@ MSG_HASH(
    "Blocked: this archive unpacks to more than 2 GB."
    )
 MSG_HASH(
+   MSG_URL_FINGERPRINT_MISMATCH,
+   "Blocked: this file is not the one that was shared (fingerprint mismatch)."
+   )
+MSG_HASH(
+   MSG_URL_CERT_INVALID,
+   "This site's security certificate is not valid. Someone may be changing the file on the way."
+   )
+MSG_HASH(
+   MSG_URL_DOWNLOAD_ANYWAY,
+   "Download anyway (unsafe)"
+   )
+MSG_HASH(
+   MSG_URL_DOWNLOAD_CANCEL,
+   "Cancel"
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_VALUE_OPEN_ARCHIVE,
    "Browse Archive"
    )

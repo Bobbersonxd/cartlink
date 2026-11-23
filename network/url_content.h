@@ -43,6 +43,18 @@ bool url_content_is_downloadable(const char *path);
 bool url_content_cli_should_fetch(bool first_pass, const char *content,
       const char *core_path, bool builtin_player);
 
+/* Splits an optional fingerprint off a link: url_out gets the URL
+ * without its fragment (everything from the first '#'). A fragment
+ * "sha256=<64 hex>" (key and hex in any case) sets *has_fp and the 32
+ * bytes in sha256_out; any other fragment is dropped and ignored
+ * (*has_fp false). False (and an empty url_out, *has_fp false) for a
+ * broken fingerprint (a "sha256=" fragment that is not exactly 64 hex
+ * digits) or if the URL does not fit: such a link is refused rather
+ * than loaded without its check. Fragments are never sent to a server
+ * and never part of the cache name. */
+bool url_content_split_fingerprint(char *url_out, size_t len,
+      uint8_t sha256_out[32], bool *has_fp, const char *url);
+
 /* Rewrites share links (Google Drive, Dropbox, OneDrive, archive.org)
  * into direct-download links; http:// archive.org links become
  * https://. Other URLs are copied unchanged. */

@@ -26,6 +26,7 @@
 #include "../../network/url_servers.h"
 #include "../../network/url_safety.h"
 #include "../../frontend/clipboard.h"
+#include <lrc_hash.h>
 
 static int g_checks   = 0;
 static int g_failures = 0;
@@ -1485,6 +1486,117 @@ static void test_servers_root(void)
    EXPECT_STR(out, "");
 }
 
+/* ---------- fingerprints (#sha256=) ---------- */
+
+#define FP_HEX "79a68194a5a1dc354264d70a556ff0a6acf1478d589a98cbb22bbb81fe55b5e5"
+
+static void test_split_fingerprint(void)
+{
+   static const uint8_t want[32] = {
+      0x79, 0xa6, 0x81, 0x94, 0xa5, 0xa1, 0xdc, 0x35,
+      0x42, 0x64, 0xd7, 0x0a, 0x55, 0x6f, 0xf0, 0xa6,
+      0xac, 0xf1, 0x47, 0x8d, 0x58, 0x9a, 0x98, 0xcb,
+      0xb2, 0x2b, 0xbb, 0x81, 0xfe, 0x55, 0xb5, 0xe5 };
+   char out[512];
+   char upper[sizeof(FP_HEX)];
+   uint8_t fp[32];
+   bool has = true;
+   size_t i;
+
+   /* Valid: stripped, decoded. */
+   memset(fp, 0, sizeof(fp));
+   EXPECT(url_content_split_fingerprint(out, sizeof(out), fp, &has,
+         "https://h/a/game.nes#sha256=" FP_HEX));
+   EXPECT_STR(out, "https://h/a/game.nes");
+   EXPECT(has);
+   EXPECT(!memcmp(fp, want, 32));
+
+   /* Upper-case hex and key are the same fingerprint. */
+   for (i = 0; FP_HEX[i]; i++)
+      upper[i] = (FP_HEX[i] >= 'a' && FP_HEX[i] <= 'f')
+         ? (char)(FP_HEX[i] - 'a' + 'A') : FP_HEX[i];
+   upper[i] = '\0';
+   snprintf(out, sizeof(out), "http://h/x?id=1#SHA256=%s", upper);
+   memset(fp, 0, sizeof(fp));
+   EXPECT(url_content_split_fingerprint(out, sizeof(out), fp, &has, out));
+   EXPECT_STR(out, "http://h/x?id=1");
+   EXPECT(has);
+   EXPECT(!memcmp(fp, want, 32));
+
+   /* No fragment: copied as is. */
+   has = true;
+   EXPECT(url_content_split_fingerprint(out, sizeof(out), fp, &has,
+         "http://h/game.gb"));
+   EXPECT_STR(out, "http://h/game.gb");
+   EXPECT(!has);
+
+   /* Other fragments: stripped and ignored. */
+   has = true;
+   EXPECT(url_content_split_fingerprint(out, sizeof(out), fp, &has,
+         "http://h/game.gb#page=2"));
+   EXPECT_STR(out, "http://h/game.gb");
+   EXPECT(!has);
+   has = true;
+   EXPECT(url_content_split_fingerprint(out, sizeof(out), fp, &has,
+         "http://h/game.gb#"));
+   EXPECT_STR(out, "http://h/game.gb");
+   EXPECT(!has);
+   has = true;
+   EXPECT(url_content_split_fingerprint(out, sizeof(out), fp, &has,
+         "http://h/game.gb#md5=" FP_HEX));
+   EXPECT_STR(out, "http://h/game.gb");
+   EXPECT(!has);
+
+   /* A broken fingerprint is refused, never silently dropped: wrong
+    * length (63, 65), not hex, extra text after it. */
+   EXPECT(!url_content_split_fingerprint(out, sizeof(out), fp, &has,
+         "http://h/g.gb#sha256=79a68194a5a1dc354264d70a556ff0a6acf1478d589a98cbb22bbb81fe55b5e"));
+   EXPECT(!has);
+   EXPECT(!url_content_split_fingerprint(out, sizeof(out), fp, &has,
+         "http://h/g.gb#sha256=" FP_HEX "0"));
+   EXPECT(!url_content_split_fingerprint(out, sizeof(out), fp, &has,
+         "http://h/g.gb#sha256=g9a68194a5a1dc354264d70a556ff0a6acf1478d589a98cbb22bbb81fe55b5e5"));
+   EXPECT(!url_content_split_fingerprint(out, sizeof(out), fp, &has,
+         "http://h/g.gb#sha256=" FP_HEX "&x=1"));
+   EXPECT(!url_content_split_fingerprint(out, sizeof(out), fp, &has,
+         "http://h/g.gb#sha256="));
+
+   /* Does not fit: false, empty out. */
+   EXPECT(!url_content_split_fingerprint(out, 8, fp, &has,
+         "http://h/game.gb"));
+   EXPECT_STR(out, "");
+
+   /* Saved Servers keep no fragment. */
+   url_servers_root(out, sizeof(out), "https://h:8443/cat/#sha256=" FP_HEX);
+   EXPECT_STR(out, "https://h:8443/");
+   url_servers_root(out, sizeof(out), "https://h#x");
+   EXPECT_STR(out, "https://h/");
+}
+
+static void test_sha256_file(void)
+{
+   static const uint8_t abc[32] = {
+      0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea,
+      0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
+      0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c,
+      0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad };
+   char path[] = "/tmp/url_sha256.XXXXXX";
+   uint8_t d[32];
+   int fd = mkstemp(path);
+   FILE *f;
+   EXPECT(fd >= 0);
+   if (fd < 0)
+      return;
+   f = fdopen(fd, "wb");
+   fwrite("abc", 1, 3, f);
+   fclose(f);
+   memset(d, 0, sizeof(d));
+   EXPECT(sha256_calculate(path, d) == 0);
+   EXPECT(!memcmp(d, abc, 32));
+   remove(path);
+   EXPECT(sha256_calculate(path, d) != 0);
+}
+
 /* ---------- url_safety ---------- */
 
 static const char *g_fixtures = NULL; /* made by make_archives.py */
@@ -1832,6 +1944,8 @@ int main(int argc, char **argv)
    test_safety_blocks_programs();
    test_safety_allows_games();
    test_safety_zone_text();
+   test_split_fingerprint();
+   test_sha256_file();
    if (argc >= 2)
    {
       char probe[1024];

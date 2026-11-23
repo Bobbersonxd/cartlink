@@ -1593,6 +1593,18 @@ MSG_HASH(
    "url_server_remove"
    )
 MSG_HASH(
+   MENU_ENUM_LABEL_DEFERRED_URL_CERT_CHOICE,
+   "deferred_url_cert_choice"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_URL_DOWNLOAD_ANYWAY,
+   "url_download_anyway"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_URL_DOWNLOAD_CANCEL,
+   "url_download_cancel"
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_DOWNLOAD_CORE_CONTENT,
    "download_core_content"
    )

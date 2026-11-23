@@ -1867,6 +1867,7 @@ int menu_cbs_init_bind_title(menu_file_list_cbs_t *cbs,
       {MENU_ENUM_LABEL_DEFERRED_DROPDOWN_BOX_LIST_NETPLAY_MITM_SERVER,                      action_get_title_dropdown_item},
       {MENU_ENUM_LABEL_DEFERRED_URL_CATALOG_LIST,                                           action_get_title_url_catalog},
       {MENU_ENUM_LABEL_DEFERRED_URL_SERVERS_LIST,                                           action_get_title_url_saved_servers},
+      {MENU_ENUM_LABEL_DEFERRED_URL_CERT_CHOICE,                                            action_get_title_url_catalog},
 #endif
       {MENU_ENUM_LABEL_DEFERRED_RPL_ENTRY_ACTIONS,                                          action_get_quick_menu_views_settings_list},
       {MENU_ENUM_LABEL_DEFERRED_PLAYLIST_LIST,                                              action_get_title_deferred_playlist_list},

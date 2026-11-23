@@ -955,6 +955,100 @@ static void test_fetch_accept_header(void)
    EXPECT_STR(buf, "accept:*/*, application/json;q=0.9");
 }
 
+/* ---------- fingerprints (#sha256=) ---------- */
+
+/* SHA-256 of serve.py's GAME (= g_game). */
+#define GAME_FP "79a68194a5a1dc354264d70a556ff0a6acf1478d589a98cbb22bbb81fe55b5e5"
+#define BAD_FP  "0000000000000000000000000000000000000000000000000000000000000000"
+#define MISMATCH_MSG "Blocked: this file is not the one that was shared (fingerprint mismatch)."
+#define CERT_MSG "This site's security certificate is not valid. Someone may be changing the file on the way."
+
+static void test_fingerprint_fetch(void)
+{
+   char cache[300], out[512], out2[512], err[256], u[512], first[256];
+   char plain_name[256];
+   int parts = 0;
+   FILE *f;
+   enum url_fetch_result r;
+
+   /* Match: downloaded, same cache name as the plain link (the
+    * fragment is never sent: serve.py would 404 on it). */
+   new_cache(cache, sizeof(cache), "fp-plain");
+   r = fetch("/game.sfc", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(count_files(cache, plain_name, sizeof(plain_name), NULL) == 1);
+
+   new_cache(cache, sizeof(cache), "fp-ok");
+   r = fetch("/game.sfc#sha256=" GAME_FP, cache, NULL, NULL,
+         out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_game(out));
+   EXPECT(count_files(cache, first, sizeof(first), NULL) == 1);
+   EXPECT_STR(first, plain_name);
+
+   /* Cache hit, still matching (re-hashed): CACHED. */
+   r = fetch("/game.sfc#sha256=" GAME_FP, cache, NULL, NULL,
+         out2, sizeof(out2), NULL, 0);
+   EXPECT(r == URL_FETCH_CACHED);
+   EXPECT_STR(out2, out);
+
+   /* Cached file changed afterwards (still game-like bytes): refused
+    * and deleted. */
+   if ((f = fopen(out, "r+b")))
+   {
+      fputc(0x55, f);
+      fclose(f);
+   }
+   url(u, sizeof(u), "/game.sfc#sha256=" GAME_FP);
+   r = url_fetch_to_cache(u, cache, NULL, NULL, out2, sizeof(out2),
+         NULL, 0, err, sizeof(err), NULL, NULL, NULL);
+   EXPECT(r == URL_FETCH_BLOCKED_FINGERPRINT);
+   EXPECT_STR(err, MISMATCH_MSG);
+   EXPECT(out2[0] == '\0');
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+
+   /* Mismatch on download: refused, nothing left (no .part either). */
+   new_cache(cache, sizeof(cache), "fp-bad");
+   url(u, sizeof(u), "/game.sfc#sha256=" BAD_FP);
+   r = url_fetch_to_cache(u, cache, NULL, NULL, out, sizeof(out),
+         NULL, 0, err, sizeof(err), NULL, NULL, NULL);
+   EXPECT(r == URL_FETCH_BLOCKED_FINGERPRINT);
+   EXPECT_STR(err, MISMATCH_MSG);
+   EXPECT(out[0] == '\0');
+   EXPECT(count_files(cache, NULL, 0, &parts) == 0);
+
+   /* A file cached by an older build (plain link) is used by a
+    * fingerprinted link when it matches ... */
+   new_cache(cache, sizeof(cache), "fp-old");
+   r = fetch("/game.sfc", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   r = fetch("/game.sfc#sha256=" GAME_FP, cache, NULL, NULL,
+         out2, sizeof(out2), NULL, 0);
+   EXPECT(r == URL_FETCH_CACHED);
+   EXPECT_STR(out2, out);
+   /* ... and the plain link still works without any check. */
+   r = fetch("/game.sfc", cache, NULL, NULL, out2, sizeof(out2), NULL, 0);
+   EXPECT(r == URL_FETCH_CACHED);
+   /* Other fragments are ignored. */
+   r = fetch("/game.sfc#part=2", cache, NULL, NULL, out2, sizeof(out2),
+         NULL, 0);
+   EXPECT(r == URL_FETCH_CACHED);
+   /* ... but a wrong fingerprint refuses (and drops) the cached file. */
+   r = fetch("/game.sfc#sha256=" BAD_FP, cache, NULL, NULL,
+         out2, sizeof(out2), NULL, 0);
+   EXPECT(r == URL_FETCH_BLOCKED_FINGERPRINT);
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+
+   /* A broken fingerprint fails the link, nothing is fetched. */
+   new_cache(cache, sizeof(cache), "fp-broken");
+   url(u, sizeof(u), "/game.sfc#sha256=1234");
+   r = url_fetch_to_cache(u, cache, NULL, NULL, out, sizeof(out),
+         NULL, 0, err, sizeof(err), NULL, NULL, NULL);
+   EXPECT(r == URL_FETCH_FAILED);
+   EXPECT(err[0] != '\0');
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+}
+
 /* ---------- https (needs the port and test CA from the Makefile) ---------- */
 
 static enum url_fetch_result fetch_s(const char *host, const char *path,
@@ -967,30 +1061,156 @@ static enum url_fetch_result fetch_s(const char *host, const char *path,
          NULL, 0, err, err_len, NULL, NULL, NULL);
 }
 
-/* Runs with the system CAs (the test CA untrusted): sending Accept must
- * not switch certificate checks on, so anonymous https still works,
- * for a file and for a list. */
-static void test_fetch_no_verify_change(void)
+static enum url_fetch_result fetch_s_any(const char *host,
+      const char *path, const char *cache, const char *user,
+      const char *pass, char *out, size_t out_len, char *err,
+      size_t err_len, struct url_catalog *cat, bool anyway)
+{
+   char u[512];
+   snprintf(u, sizeof(u), "https://%s:%d%s", host, g_sport, path);
+   return url_fetch_to_cache_ex(u, cache, user, pass, out, out_len,
+         NULL, 0, err, err_len, NULL, NULL, cat, anyway);
+}
+
+/* Runs with the system CAs (the test CA untrusted, so localhost's
+ * certificate does not verify): every https request is checked now. */
+static void test_https_cert(void)
 {
    char cache[300], out[512], err[256];
    struct url_catalog cat;
    enum url_fetch_result r;
-   new_cache(cache, sizeof(cache), "https-noverify");
-   r = fetch_s("localhost", "/plain.json", cache, NULL, NULL,
+   int parts = 0;
+
+   /* No login: CERT_INVALID (the "Download anyway" choice), nothing
+    * cached. */
+   new_cache(cache, sizeof(cache), "https-cert");
+   r = fetch_s("localhost", "/game.sfc", cache, NULL, NULL,
          out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_CERT_INVALID);
+   EXPECT_STR(err, CERT_MSG);
+   EXPECT(out[0] == '\0');
+   EXPECT(count_files(cache, NULL, 0, &parts) == 0);
+
+   /* A game list too. */
+   memset(&cat, 0, sizeof(cat));
+   r = fetch_s_any("localhost", "/cat/", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err), &cat, false);
+   EXPECT(r == URL_FETCH_CERT_INVALID);
+   EXPECT(cat.count == 0);
+   url_catalog_free(&cat);
+
+   /* "Download anyway (unsafe)": this one download goes ahead. */
+   r = fetch_s_any("localhost", "/game.sfc", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err), NULL, true);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_game(out));
+   r = fetch_s_any("localhost", "/plain.json", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err), NULL, true);
    EXPECT(r == URL_FETCH_OK);
    EXPECT(file_is_text(out, "{\"hi\":1}"));
-
    memset(&cat, 0, sizeof(cat));
-   {
-      char u[256];
-      snprintf(u, sizeof(u), "https://localhost:%d/cat/", g_sport);
-      r = fetch_cat(u, cache, NULL, NULL, out, sizeof(out),
-            err, sizeof(err), &cat);
-   }
+   r = fetch_s_any("localhost", "/cat/", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err), &cat, true);
    EXPECT(r == URL_FETCH_CATALOG);
    EXPECT(cat.count == 2);
    url_catalog_free(&cat);
+
+   /* With a login: never, even with the flag; the login is not sent. */
+   auth_log();
+   new_cache(cache, sizeof(cache), "https-cert-login");
+   r = fetch_s_any("localhost", "/basic/game.sfc", cache, "bob", "pw",
+         out, sizeof(out), err, sizeof(err), NULL, true);
+   EXPECT(r == URL_FETCH_FAILED);
+   EXPECT_STR(err, "This site's security certificate is not valid, so the login was not sent.");
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+   EXPECT_STR(auth_log(), "empty");
+   EXPECT(url_logins_set("localhost", "bob", "pw"));
+   r = fetch_s_any("localhost", "/basic/game.sfc", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err), NULL, true);
+   EXPECT(r == URL_FETCH_FAILED);
+   EXPECT_STR(auth_log(), "empty");
+   EXPECT(url_logins_forget_all());
+
+   /* archive.org keys are a login too. */
+   url_fetch_set_test_archive_host("localhost");
+   EXPECT(url_logins_set_archive_keys("ACCESSKEY", "SECRETKEY"));
+   r = fetch_s_any("localhost", "/echoauth", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err), NULL, true);
+   EXPECT(r == URL_FETCH_FAILED);
+   url_fetch_set_test_archive_host(NULL);
+   EXPECT(url_logins_forget_all());
+
+   /* Fingerprinted: no choice needed, the fingerprint protects it. */
+   new_cache(cache, sizeof(cache), "https-cert-fp");
+   r = fetch_s("localhost", "/game.sfc#sha256=" GAME_FP, cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_game(out));
+   new_cache(cache, sizeof(cache), "https-cert-fpbad");
+   r = fetch_s("localhost", "/game.sfc#sha256=" BAD_FP, cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_BLOCKED_FINGERPRINT);
+   EXPECT_STR(err, MISMATCH_MSG);
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+   /* A fingerprinted game list must match too. */
+   memset(&cat, 0, sizeof(cat));
+   r = fetch_s_any("localhost", "/cat/#sha256=" BAD_FP, cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err), &cat, false);
+   EXPECT(r == URL_FETCH_BLOCKED_FINGERPRINT);
+   EXPECT(cat.count == 0);
+   url_catalog_free(&cat);
+   /* Fingerprint + login over a bad certificate: still refused. */
+   r = fetch_s("localhost", "/basic/game.sfc#sha256=" GAME_FP, cache,
+         "bob", "pw", out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_FAILED);
+   EXPECT_STR(auth_log(), "empty");
+
+   /* No CA certificates at all: same choice for a no-login download. */
+   ssl_socket_set_ca_bundle_override("/nonexistent/ca.pem");
+   new_cache(cache, sizeof(cache), "https-cert-noca");
+   r = fetch_s("localhost", "/game.sfc", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_CERT_INVALID);
+   r = fetch_s_any("localhost", "/game.sfc", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err), NULL, true);
+   EXPECT(r == URL_FETCH_OK);
+
+   /* Trusted certificate: no login needed, it just works; the wrong
+    * name on it does not. */
+   ssl_socket_set_ca_bundle_override(g_ca);
+   new_cache(cache, sizeof(cache), "https-cert-ok");
+   r = fetch_s("localhost", "/game.sfc", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_game(out));
+   new_cache(cache, sizeof(cache), "https-cert-name");
+   r = fetch_s("127.0.0.1", "/game.sfc", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_CERT_INVALID);
+
+   /* A good host redirecting to one whose certificate fails: the same
+    * choice without a login ... */
+   new_cache(cache, sizeof(cache), "https-cert-hop");
+   r = fetch_s("localhost", "/xhost-s", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_CERT_INVALID);
+   r = fetch_s_any("localhost", "/xhost-s", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err), NULL, true);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_game(out));
+   /* ... but never for a download that uses a (saved) login, even on
+    * the hop that carries none. */
+   new_cache(cache, sizeof(cache), "https-cert-hop-login");
+   EXPECT(url_logins_set("localhost", "bob", "pw"));
+   r = fetch_s("localhost", "/xhost-s", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_FAILED);
+   r = fetch_s_any("localhost", "/xhost-s", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err), NULL, true);
+   EXPECT(r == URL_FETCH_FAILED);
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+   EXPECT(url_logins_forget_all());
+   ssl_socket_set_ca_bundle_override(NULL);
 }
 
 static void test_https(void)
@@ -1001,17 +1221,10 @@ static void test_https(void)
    const char *bad = "This site's security certificate is not valid, so the login was not sent.";
    const char *noca = "Can't check this site's security certificate, so the login was not sent.";
 
-   /* System CAs (the test CA is not one of them): anonymous downloads
-    * work as in upstream RetroArch (no check), a login is refused
+   /* System CAs (the test CA is not one of them): a login is refused
     * before the server sees anything. */
    ssl_socket_set_ca_bundle_override(NULL);
-   new_cache(cache, sizeof(cache), "https-anon");
-   r = fetch_s("localhost", "/game.sfc", cache, NULL, NULL,
-         out, sizeof(out), err, sizeof(err));
-   EXPECT(r == URL_FETCH_OK);
-   EXPECT(file_is_game(out));
-
-   test_fetch_no_verify_change();
+   test_https_cert();
 
    auth_log();
    new_cache(cache, sizeof(cache), "https-untrusted");
@@ -1031,7 +1244,7 @@ static void test_https(void)
    EXPECT_STR(auth_log(), "empty");
    EXPECT(url_logins_forget_all());
 
-   /* No CA certificates at all: a clear refusal; anonymous still ok. */
+   /* No CA certificates at all: a clear refusal. */
    ssl_socket_set_ca_bundle_override("/nonexistent/ca.pem");
    new_cache(cache, sizeof(cache), "https-noca");
    r = fetch_s("localhost", "/basic/game.sfc", cache, "bob", "pw",
@@ -1039,9 +1252,6 @@ static void test_https(void)
    EXPECT(r == URL_FETCH_FAILED);
    EXPECT_STR(err, noca);
    EXPECT_STR(auth_log(), "empty");
-   r = fetch_s("localhost", "/game.sfc", cache, NULL, NULL,
-         out, sizeof(out), err, sizeof(err));
-   EXPECT(r == URL_FETCH_OK);
 
    /* Trusting the test CA: the login goes through (Basic right away
     * over https), but only for the name on the certificate. */
@@ -1338,6 +1548,7 @@ int main(int argc, char **argv)
    test_fetch_catalog_null_sink();
    test_fetch_plain_json_is_file();
    test_fetch_accept_header();
+   test_fingerprint_fetch();
    if (g_sport > 0)
       test_https();
    else

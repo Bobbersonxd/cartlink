@@ -52,6 +52,16 @@ RETRO_BEGIN_DECLS
 void sha256_hash(char *s, const uint8_t *in, size_t len);
 
 /**
+ * sha256_calculate:
+ * @path              : File to hash.
+ * @digest            : Output, the 32-byte SHA256 of the whole file.
+ *
+ * Reads the file in small pieces (any size works).
+ * Returns 0 on success, -1 if the file cannot be read.
+ **/
+int sha256_calculate(const char *path, uint8_t digest[32]);
+
+/**
  * SHA1Digest:
  * @data              : Input.
  * @len               : Size of @data.

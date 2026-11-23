@@ -39,7 +39,10 @@ enum url_fetch_result
    URL_FETCH_CATALOG,       /* a Caddy folder listing (game list) */
    URL_FETCH_BLOCKED_PROGRAM, /* a program, not a game: nothing kept */
    URL_FETCH_BLOCKED_ARCHIVE, /* archive with a program/unsafe path/bomb, or unreadable */
-   URL_FETCH_BLOCKED_TOO_BIG  /* archive unpacks to more than 2 GiB */
+   URL_FETCH_BLOCKED_TOO_BIG, /* archive unpacks to more than 2 GiB */
+   URL_FETCH_BLOCKED_FINGERPRINT, /* #sha256= did not match: nothing kept */
+   URL_FETCH_CERT_INVALID     /* https certificate did not verify (no login
+                                 sent): may be retried with download_anyway */
 };
 
 typedef void (*url_fetch_progress_t)(size_t done, size_t total, void *ud);
@@ -51,9 +54,7 @@ typedef void (*url_fetch_progress_t)(size_t done, size_t total, void *ud);
  * with the first request (retried once with Digest if the server asks
  * for it); over plain http nothing is sent until the server answers
  * 401, then its challenge (Digest preferred, else Basic) is answered
- * once. Any request carrying a login or keys over https needs a
- * certificate that verifies against the system CAs; otherwise it is
- * not sent and FAILED explains why. On NEED_LOGIN, challenge holds the
+ * once. Certificates: see url_fetch_to_cache_ex. On NEED_LOGIN, challenge holds the
  * WWW-Authenticate value (may be empty). cb, out buffers and err may
  * be NULL / zero length. cache_dir is created if missing.
  * Every request sends an Accept header that also takes JSON. An
@@ -73,6 +74,28 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
       char *out_path, size_t out_len, char *challenge, size_t ch_len,
       char *err, size_t err_len, url_fetch_progress_t cb, void *ud,
       struct url_catalog *catalog_or_null);
+
+/* url_fetch_to_cache with the certificate rules spelled out (the plain
+ * call is download_anyway = false):
+ * - Every https request needs a certificate that verifies against the
+ *   system CAs. A request carrying a login or archive.org keys that
+ *   fails it is never sent: FAILED, the login was not sent.
+ * - Without a login, a failed check is CERT_INVALID (nothing sent or
+ *   kept, err says so): the caller may ask the user and call again with
+ *   download_anyway = true, which skips the check for this download's
+ *   requests that carry no login (never for a login or keys).
+ * - A link ending in #sha256=<64 hex> is downloaded without the check
+ *   (no login) but the file (or game list) must hash to it: otherwise
+ *   it is deleted and BLOCKED_FINGERPRINT. Cache hits for such a link
+ *   are hashed again every time. A broken #sha256= fails the link
+ *   (FAILED). The fragment is never sent and the cache name is that of
+ *   the URL without it, so files cached before stay valid. */
+enum url_fetch_result url_fetch_to_cache_ex(const char *url,
+      const char *cache_dir,
+      const char *user_or_null, const char *pass_or_null,
+      char *out_path, size_t out_len, char *challenge, size_t ch_len,
+      char *err, size_t err_len, url_fetch_progress_t cb, void *ud,
+      struct url_catalog *catalog_or_null, bool download_anyway);
 
 /* Deletes the downloaded files in cache_dir: plain files named
  * <16 hex>_..., nothing else (no sub-folders, no other files). Refuses

@@ -1691,6 +1691,15 @@ int generic_action_ok_displaylist_push(
          info.enum_idx      = MENU_ENUM_LABEL_DEFERRED_URL_SERVERS_LIST;
          dl_type            = DISPLAYLIST_GENERIC;
          break;
+      case ACTION_OK_DL_URL_CERT_CHOICE:
+         info.type          = type;
+         info.directory_ptr = idx;
+         info_path          = path; /* the link to retry */
+         info_label         = msg_hash_to_str(
+               MENU_ENUM_LABEL_DEFERRED_URL_CERT_CHOICE);
+         info.enum_idx      = MENU_ENUM_LABEL_DEFERRED_URL_CERT_CHOICE;
+         dl_type            = DISPLAYLIST_GENERIC;
+         break;
 #endif
       case ACTION_OK_DL_CORE_SYSTEM_FILES_LIST:
          info.type          = type;
@@ -8503,6 +8512,60 @@ static int action_ok_url_catalog_entry(const char *path,
    return 0;
 }
 
+int action_ok_url_cert_choice_push(const char *url)
+{
+   struct menu_state *menu_st = menu_state_get_ptr();
+
+   if (string_is_empty(url))
+      return -1;
+   return generic_action_ok_displaylist_push(url, NULL, "", 0,
+         menu_st->selection_ptr, 0, ACTION_OK_DL_URL_CERT_CHOICE);
+}
+
+/* Leaves the certificate choice level; url gets its link (the level's
+ * path) first. False if the top level is not that choice. */
+static bool action_ok_url_cert_choice_pop(char *url, size_t len)
+{
+   struct menu_state *menu_st = menu_state_get_ptr();
+   const char *menu_path      = NULL;
+   const char *menu_label     = NULL;
+   size_t new_selection_ptr;
+
+   menu_entries_get_last_stack(&menu_path, &menu_label, NULL, NULL, NULL);
+   if (     string_is_empty(menu_path)
+         || !string_is_equal(menu_label,
+               msg_hash_to_str(MENU_ENUM_LABEL_DEFERRED_URL_CERT_CHOICE)))
+      return false;
+   strlcpy(url, menu_path, len);
+   new_selection_ptr = menu_st->selection_ptr;
+   menu_entries_pop_stack(&new_selection_ptr, 0, 1);
+   menu_st->selection_ptr = new_selection_ptr;
+   return true;
+}
+
+/* "Download anyway (unsafe)": this one link, once, without the
+ * certificate check (url_fetch never skips it for a login). */
+static int action_ok_url_download_anyway(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   char url[4096];
+
+   if (!action_ok_url_cert_choice_pop(url, sizeof(url)))
+      return -1;
+   task_push_url_content_load_anyway(url);
+   return 0;
+}
+
+static int action_ok_url_download_cancel(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   char url[4096];
+
+   if (!action_ok_url_cert_choice_pop(url, sizeof(url)))
+      return -1;
+   return 0;
+}
+
 static int action_ok_url_saved_servers(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx)
 {
@@ -9453,6 +9516,8 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
          {MENU_ENUM_LABEL_URL_CATALOG_ENTRY,                   action_ok_url_catalog_entry},
          {MENU_ENUM_LABEL_URL_SERVER_ENTRY,                    action_ok_url_server_entry},
          {MENU_ENUM_LABEL_URL_SERVER_REMOVE,                   action_ok_url_server_remove},
+         {MENU_ENUM_LABEL_URL_DOWNLOAD_ANYWAY,                 action_ok_url_download_anyway},
+         {MENU_ENUM_LABEL_URL_DOWNLOAD_CANCEL,                 action_ok_url_download_cancel},
 #endif
          {MENU_ENUM_LABEL_DETECT_CORE_LIST_OK,                 action_ok_file_load_detect_core},
          {MENU_ENUM_LABEL_DETECT_CORE_LIST_OK_CURRENT_CORE,    action_ok_file_load_current_core},

@@ -4,6 +4,9 @@
 # a file is downloaded, an empty folder says so, the server is saved
 # under Saved Servers (and can be removed), and a login typed for a
 # list is saved and reused one level deeper without asking again.
+# Last, an https link whose certificate does not verify (serve.py's
+# throwaway test CA) offers "Cancel" / "Download anyway (unsafe)" for a
+# file and for a game list.
 #
 # RetroArch runs inside a headless gamescope (no window on the desktop),
 # with a throwaway HOME and config, null audio. The menu is driven with
@@ -101,6 +104,22 @@ cache_directory = "%s/cache"
         if not wait_port(web_port):
             print("FAIL: serve.py did not start")
             return 1
+        certs = ROOT + "/tests-other/url_content/certs"
+        subprocess.run(["make", "-s", "-C", os.path.dirname(certs),
+                        "certs/ca.pem", "certs/srv.pem", "certs/srv.key"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        tls_http_port = free_port()
+        tls_port = free_port()
+        tls = subprocess.Popen(NICE + ["python3", SERVE, str(tls_http_port),
+                               str(tls_port), certs + "/srv.pem",
+                               certs + "/srv.key"],
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
+        procs.append(tls)
+        if not wait_port(tls_port):
+            print("FAIL: https serve.py did not start")
+            return 1
+        tls_base = "https://localhost:%d" % tls_port
 
         env = dict(os.environ, HOME=home, XDG_CONFIG_HOME=home + "/.config",
                    ASAN_OPTIONS="log_path=%s/asan:exitcode=0" % work)
@@ -305,6 +324,44 @@ cache_directory = "%s/cache"
               "deeper folder used the saved login, no prompt (auth: %s)"
               % al)
         snap("catalog-13-login-deeper")
+
+        # A certificate that does not verify, no login: the choice.
+        # Back to Load Content (the cursor returns to Load from URL).
+        cmd("MENU_A")
+        cmd("MENU_A")
+        bad = ("This site's security certificate is not valid. "
+               "Someone may be changing the file on the way.")
+        n_bad = log().count(bad)
+        cmd("MENU_B")
+        type_line(tls_base + "/game.sfc")
+        time.sleep(1.5)
+        check(log().count(bad) == n_bad + 1, "bad certificate reported")
+        snap("cert-1-choice")
+        # Row 1 is "Cancel": nothing downloaded, back to Load Content.
+        cmd("MENU_B", 1.5)
+        check(not cached("game.sfc"), "Cancel: nothing downloaded")
+        snap("cert-2-cancelled")
+        # A game list over the same certificate: Download anyway opens it.
+        n_lists = log().count("Game list with 2 item(s)")
+        cmd("MENU_B")
+        type_line(tls_base + "/cat/")
+        time.sleep(1.5)
+        check(log().count(bad) == n_bad + 2, "bad certificate for a list")
+        cmd("MENU_DOWN")
+        snap("cert-3-anyway-selected")
+        cmd("MENU_B", 3)
+        check(log().count("Game list with 2 item(s)") == n_lists + 1,
+              "Download anyway opened the game list")
+        snap("cert-4-list-anyway")
+        cmd("MENU_A")
+        # And a file: Download anyway downloads it (once).
+        cmd("MENU_B")
+        type_line(tls_base + "/game.sfc")
+        time.sleep(1.5)
+        cmd("MENU_DOWN")
+        cmd("MENU_B", 3)
+        check(len(cached("game.sfc")) == 1, "Download anyway downloaded it")
+        snap("cert-5-file-anyway")
 
         cmd("QUIT")
         rc = None

@@ -434,6 +434,53 @@ static void uc_fix_onedrive(char *out, size_t len, const char *url)
    free(b64);
 }
 
+bool url_content_split_fingerprint(char *url_out, size_t len,
+      uint8_t sha256_out[32], bool *has_fp, const char *url)
+{
+   const char *hash;
+   size_t      n;
+   size_t      i;
+
+   /* url_out may be url itself: it is only written at the end. */
+   if (has_fp)
+      *has_fp = false;
+   if (!url_out || !len)
+      return false;
+   if (!url)
+      goto fail;
+
+   hash = strchr(url, '#');
+   n    = hash ? (size_t)(hash - url) : strlen(url);
+   if (n >= len)
+      goto fail;
+
+   if (hash && uc_starts_with_ci(hash + 1, "sha256="))
+   {
+      const char *hex = hash + 1 + 7; /* "sha256=" */
+      uint8_t     fp[32];
+      for (i = 0; i < 64; i++)
+         if (uc_hex_val(hex[i]) < 0)
+            goto fail;       /* also stops at the end of the string */
+      if (hex[64] != '\0')
+         goto fail;
+      for (i = 0; i < 32; i++)
+         fp[i] = (uint8_t)((uc_hex_val(hex[2 * i]) << 4)
+               | uc_hex_val(hex[2 * i + 1]));
+      if (sha256_out)
+         memcpy(sha256_out, fp, sizeof(fp));
+      if (has_fp)
+         *has_fp = true;
+   }
+
+   memmove(url_out, url, n);
+   url_out[n] = '\0';
+   return true;
+
+fail:
+   url_out[0] = '\0';
+   return false;
+}
+
 void url_content_fix_link(char *out, size_t len, const char *url)
 {
    char        buf[2048];

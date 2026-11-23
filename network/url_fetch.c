@@ -29,6 +29,7 @@
 #include <retro_timers.h>
 #include <features/features_cpu.h>
 #include <lists/string_list.h>
+#include <lrc_hash.h>
 #include <net/net_http.h>
 #include <streams/file_stream.h>
 #include <string/stdstring.h>
@@ -311,17 +312,16 @@ static bool uf_sink_cb(void *ud, int status,
 
 /* Blocking GET. Fills r; returns false only if no request could be
  * made at all (bad URL / out of memory). A 2xx body goes to part_path
- * as it arrives (see struct uf_sink); r->len counts it. Requests that
- * carry a login or keys (non-empty auth) over https need a verified
- * certificate:
- * without one nothing is sent and r->tls_error says why. The Accept
- * header is separate from auth so it never turns that check on. */
+ * as it arrives (see struct uf_sink); r->len counts it. An https
+ * request needs a verified certificate unless skip_verify is set, and
+ * always when it carries a login or keys (non-empty auth): without
+ * one nothing is sent and r->tls_error says why. */
 static bool uf_get(const char *url, const char *auth_or_null,
-      bool accept_json, const char *part_path, struct uf_response *r,
-      url_fetch_progress_t cb, void *ud)
+      bool accept_json, bool skip_verify, const char *part_path,
+      struct uf_response *r, url_fetch_progress_t cb, void *ud)
 {
-   bool verify = auth_or_null && *auth_or_null
-      && string_starts_with_case_insensitive(url, "https://");
+   bool verify = string_starts_with_case_insensitive(url, "https://")
+      && (!skip_verify || (auth_or_null && *auth_or_null));
    char headers[UF_HDR_LEN + sizeof(UF_ACCEPT)];
    struct http_connection_t *conn;
    struct http_t *http;
@@ -537,12 +537,47 @@ static enum url_fetch_result uf_check_safety(const char *path,
    }
 }
 
+#define UF_MSG_MISMATCH "Blocked: this file is not the one that was shared (fingerprint mismatch)."
+
+/* True if the file at path hashes to fp. False if not or unreadable. */
+static bool uf_file_matches(const char *path, const uint8_t fp[32])
+{
+   uint8_t d[32];
+   return sha256_calculate(path, d) == 0 && memcmp(d, fp, sizeof(d)) == 0;
+}
+
+/* True if the bytes hash to fp. */
+static bool uf_mem_matches(const uint8_t *data, size_t len,
+      const uint8_t fp[32])
+{
+   char hex[65];
+   char want[65];
+   size_t i;
+   sha256_hash(hex, data, len);
+   for (i = 0; i < 32; i++)
+      snprintf(want + 2 * i, 3, "%02x", (unsigned)fp[i]);
+   return string_is_equal(hex, want);
+}
+
 enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
       const char *user_or_null, const char *pass_or_null,
       char *out_path, size_t out_len, char *challenge, size_t ch_len,
       char *err, size_t err_len, url_fetch_progress_t cb, void *ud,
       struct url_catalog *catalog_or_null)
 {
+   return url_fetch_to_cache_ex(url, cache_dir, user_or_null, pass_or_null,
+         out_path, out_len, challenge, ch_len, err, err_len, cb, ud,
+         catalog_or_null, false);
+}
+
+enum url_fetch_result url_fetch_to_cache_ex(const char *url,
+      const char *cache_dir,
+      const char *user_or_null, const char *pass_or_null,
+      char *out_path, size_t out_len, char *challenge, size_t ch_len,
+      char *err, size_t err_len, url_fetch_progress_t cb, void *ud,
+      struct url_catalog *catalog_or_null, bool download_anyway)
+{
+   char link[UF_URL_LEN];
    char fixed[UF_URL_LEN];
    char cur[UF_URL_LEN];
    char next[UF_URL_LEN];
@@ -564,6 +599,10 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
    enum url_fetch_result ret = URL_FETCH_FAILED;
    bool have_login           = false;
    bool downgraded           = false;
+   bool has_fp               = false;
+   bool skip_verify          = false;
+   bool tls_auth             = false; /* the refused request had a login */
+   uint8_t fp[32];
    unsigned hops             = 0;
 
    user[0] = '\0';
@@ -592,7 +631,14 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
       goto end;
    }
 
-   url_content_fix_link(fixed, sizeof(fixed), url);
+   /* The fragment (and a #sha256= fingerprint in it) never goes to the
+    * server and is not part of the cache name. */
+   if (!url_content_split_fingerprint(link, sizeof(link), fp, &has_fp, url))
+   {
+      uf_set_err(err, err_len, "This link's fingerprint is broken: #sha256= needs 64 hex digits.");
+      goto end;
+   }
+   url_content_fix_link(fixed, sizeof(fixed), link);
    url_content_host(host, sizeof(host), fixed);
 
    /* The hash part of the cache name is the same for any file name. */
@@ -622,6 +668,13 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
       if (n == (size_t)-1)
       {
          uf_set_err(err, err_len, "Cannot read the cache file.");
+         goto end;
+      }
+      if (has_fp && !uf_file_matches(final_path, fp))
+      {
+         filestream_delete(final_path);
+         uf_set_err(err, err_len, UF_MSG_MISMATCH);
+         ret = URL_FETCH_BLOCKED_FINGERPRINT;
          goto end;
       }
       ret = uf_check_safety(final_path, found, r->sink.head, n,
@@ -663,6 +716,12 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
       have_login = url_logins_get(host, user, sizeof(user),
             pass, sizeof(pass));
 
+   /* A fingerprint protects the file, so its certificate need not.
+    * "Download anyway" never applies to a download that uses a login
+    * (typed or saved), not even for its hops without one. Requests
+    * that carry a login or keys are always checked (uf_get). */
+   skip_verify = has_fp || (download_anyway && !have_login);
+
    /* Redirects are followed here, not by net_http, so that the
     * credentials can be chosen again for every hop. */
    strlcpy(cur, fixed, sizeof(cur));
@@ -676,7 +735,8 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
             downgraded, have_login, user, pass);
 
       uf_response_free(r);
-      if (!uf_get(cur, auth, true, part_path, r, cb, ud))
+      tls_auth = auth[0] != '\0';
+      if (!uf_get(cur, auth, true, skip_verify, part_path, r, cb, ud))
       {
          uf_set_err(err, err_len, "Bad URL.");
          goto end;
@@ -705,7 +765,8 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
          if (retry)
          {
             uf_response_free(r);
-            if (!uf_get(cur, auth, true, part_path, r, cb, ud))
+            tls_auth = true;
+            if (!uf_get(cur, auth, true, skip_verify, part_path, r, cb, ud))
             {
                uf_set_err(err, err_len, "Bad URL.");
                goto end;
@@ -738,6 +799,14 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
 
    if (r->tls_error)
    {
+      if (!tls_auth && !have_login)
+      {
+         /* Nothing was sent that needs protecting: the caller may offer
+          * "Download anyway (unsafe)" (never for a login). */
+         uf_set_err(err, err_len, "This site's security certificate is not valid. Someone may be changing the file on the way.");
+         ret = URL_FETCH_CERT_INVALID;
+         goto end;
+      }
       uf_set_err(err, err_len, r->tls_error == NET_HTTP_TLS_NO_CA
             ? "Can't check this site's security certificate, so the login was not sent."
             : "This site's security certificate is not valid, so the login was not sent.");
@@ -804,6 +873,13 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
    {
       struct url_catalog tmp;
       memset(&tmp, 0, sizeof(tmp));
+      /* A fingerprinted link must match whatever it gives, a list too. */
+      if (has_fp && !uf_mem_matches(r->sink.mem, r->sink.mem_len, fp))
+      {
+         uf_set_err(err, err_len, UF_MSG_MISMATCH);
+         ret = URL_FETCH_BLOCKED_FINGERPRINT;
+         goto end;
+      }
       if (url_catalog_parse((const char*)r->sink.mem, r->sink.mem_len,
                cur, &tmp))
       {
@@ -842,11 +918,19 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
    fill_pathname_join_special(final_path, cache_dir, found,
          sizeof(final_path));
 
-   /* Keep the finished .part (closed, not deleted), then rename. */
+   /* Keep the finished .part (closed, not deleted), check its
+    * fingerprint, then rename: a wrong file never gets the real name. */
    if (r->sink.file)
    {
       bool ok = filestream_close(r->sink.file) == 0;
       r->sink.file = NULL;
+      if (ok && has_fp && !uf_file_matches(part_path, fp))
+      {
+         filestream_delete(part_path);
+         uf_set_err(err, err_len, UF_MSG_MISMATCH);
+         ret = URL_FETCH_BLOCKED_FINGERPRINT;
+         goto end;
+      }
       if (!ok || filestream_rename(part_path, final_path) != 0)
       {
          filestream_delete(part_path);
@@ -876,6 +960,7 @@ end:
    url_content_wipe(user, sizeof(user));
    url_content_wipe(pass, sizeof(pass));
    url_content_wipe(auth, sizeof(auth));
+   url_content_wipe(link, sizeof(link));
    return ret;
 }
 

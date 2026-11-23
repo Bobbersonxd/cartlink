@@ -14,7 +14,15 @@
 #          "open it from the menu", caches nothing, saves no server
 #   Run B: a program behind a game name (.gb with ELF bytes) exits 1
 #          with "Blocked: ...", nothing left in the cache
+#   Run F: a URL with #sha256=<fingerprint> downloads under the same
+#          cache name and runs; a wrong fingerprint exits 1 with
+#          "Blocked: ... (fingerprint mismatch)", nothing cached
+#   Run T: https with a certificate that does not verify exits 1 with
+#          the certificate message (the command line never offers
+#          "Download anyway"), nothing cached; the same link with its
+#          fingerprint downloads
 #   Run 3: netplay, host and client both loading the same URL
+#   Run 3F: netplay again, both peers with the fingerprinted URL
 #   Run 4: a media URL (live.mp4) still takes the old media path
 #   Run M: an extensionless stream URL with a media core (-L ...ffmpeg...)
 #          is not fetched
@@ -311,38 +319,116 @@ else
    fail "run B: not a game (exit $rc, cache files $bfiles, see $WORK/runB.log.out)"
 fi
 
-# ------------------------------------------------- run 3: netplay
+# ------------------------------------------------- run F: fingerprint
 
-NP_PORT=$(free_port)
-PA=$(make_profile host)
-PB=$(make_profile client)
-HOME=$PA/home XDG_CONFIG_HOME=$PA/home/.config \
-   $LIMIT $NICE "$RA" --config="$PA/retroarch.cfg" --appendconfig="$PA/append.cfg" \
-   --verbose --log-file="$WORK/run3a.log" -L "$CORE" "$URL" \
-   --host --port="$NP_PORT" --nick=hosty --max-frames=600 \
-   </dev/null >"$WORK/run3a.log.out" 2>&1 &
-APID=$!
-PIDS="$PIDS $APID"
-if wait_port "$NP_PORT"; then
-   ra "$PB" "$WORK/run3b.log" -L "$CORE" "$URL" \
-      --connect=127.0.0.1 --port="$NP_PORT" --nick=clienty --max-frames=600
-   rcb=$?
-   wait "$APID"
-   rca=$?
-   crca=$(grep -o "\[Content\] CRC32: 0x[0-9a-f]*" "$WORK/run3a.log" | head -n 1)
-   crcb=$(grep -o "\[Content\] CRC32: 0x[0-9a-f]*" "$WORK/run3b.log" | head -n 1)
-   if [ $rca -eq 0 ] && [ $rcb -eq 0 ] \
-         && [ -n "$crca" ] && [ "$crca" = "$crcb" ] \
-         && grep -q "\[Netplay\] Connected to" "$WORK/run3b.log" \
-         && ! grep -qi "CRC32s differ\|different game\|mismatch" \
-            "$WORK/run3a.log" "$WORK/run3b.log"; then
-      pass "run 3: netplay client connected, same ${crca#\[Content\] }, no mismatch"
+FP=$(sha256sum "$ROM" | cut -d' ' -f1)
+PF=$(make_profile fingerprint)
+ra "$PF" "$WORK/runF.log" -L "$CORE" "$URL#sha256=$FP" --max-frames=120
+rc=$?
+cached=$(ls "$PF/assets/url_cache/"*_game.nes 2>/dev/null | head -n 1)
+plain=$(ls "$P1/assets/url_cache/"*_game.nes 2>/dev/null | head -n 1)
+if [ $rc -eq 0 ] && [ -n "$cached" ] && cmp -s "$cached" "$ROM" \
+      && [ "$(basename "$cached")" = "$(basename "$plain")" ] \
+      && grep -q "Loading content file: \"$cached\"" "$WORK/runF.log" \
+      && ! grep -q "sha256" "$WORK/server.log"; then
+   pass "run F: fingerprinted URL downloaded (same cache name) and run"
+else
+   fail "run F: fingerprint (exit $rc, cached='$cached', see $WORK/runF.log)"
+fi
+PFB=$(make_profile fingerprint-bad)
+ra "$PFB" "$WORK/runFB.log" -L "$CORE" \
+   "$URL#sha256=0000000000000000000000000000000000000000000000000000000000000000" \
+   --max-frames=30
+rc=$?
+ffiles=$(find "$PFB/assets/url_cache" -type f 2>/dev/null | wc -l)
+if [ $rc -eq 1 ] && grep -q \
+      "Blocked: this file is not the one that was shared (fingerprint mismatch)." \
+      "$WORK/runFB.log.out" && [ "$ffiles" -eq 0 ]; then
+   pass "run F: wrong fingerprint refused, nothing cached (exit $rc)"
+else
+   fail "run F: wrong fingerprint (exit $rc, cache files $ffiles, see $WORK/runFB.log.out)"
+fi
+
+# ------------------------------------------------- run T: certificate
+
+# serve.py's https side uses the throwaway test CA, which is not one of
+# the system CAs, so localhost's certificate does not verify here.
+CERTS=$ROOT/tests-other/url_content/certs
+make -s -C "$ROOT/tests-other/url_content" certs/ca.pem certs/srv.pem \
+   certs/srv.key >/dev/null 2>&1
+TLS_HTTP_PORT=$(free_port)
+TLS_PORT=$(free_port)
+python3 "$ROOT/tests-other/url_content/serve.py" "$TLS_HTTP_PORT" "$TLS_PORT" \
+   "$CERTS/srv.pem" "$CERTS/srv.key" >/dev/null 2>&1 &
+PIDS="$PIDS $!"
+if [ -f "$CERTS/srv.pem" ] && wait_port "$TLS_PORT"; then
+   PT=$(make_profile tls)
+   ra "$PT" "$WORK/runT.log" -L "$CORE" \
+      "https://localhost:$TLS_PORT/game.sfc" --max-frames=30
+   rc=$?
+   tfiles=$(find "$PT/assets/url_cache" -type f 2>/dev/null | wc -l)
+   if [ $rc -eq 1 ] && grep -q \
+         "This site's security certificate is not valid. Someone may be changing the file on the way." \
+         "$WORK/runT.log.out" && [ "$tfiles" -eq 0 ]; then
+      pass "run T: bad certificate refused on the command line (exit $rc)"
    else
-      fail "run 3: netplay (host exit $rca, client exit $rcb, see $WORK/run3b.log)"
+      fail "run T: bad certificate (exit $rc, cache files $tfiles, see $WORK/runT.log.out)"
+   fi
+   # serve.py's game.sfc is not an NES game: only the download counts.
+   SFC_FP=$(python3 -c 'import hashlib; print(hashlib.sha256(bytes((i * 7 + 3) & 0xFF for i in range(8192))).hexdigest())')
+   ra "$PT" "$WORK/runTF.log" -L "$CORE" \
+      "https://localhost:$TLS_PORT/game.sfc#sha256=$SFC_FP" --max-frames=30
+   rc=$?
+   cached=$(ls "$PT/assets/url_cache/"*_game.sfc 2>/dev/null | head -n 1)
+   if [ -n "$cached" ] && [ "$(wc -c < "$cached")" -eq 8192 ] \
+         && grep -q "\[URL\] Downloaded" "$WORK/runTF.log"; then
+      pass "run T: fingerprinted link downloads despite the certificate"
+   else
+      fail "run T: fingerprinted https (exit $rc, see $WORK/runTF.log)"
    fi
 else
-   fail "run 3: netplay host never listened (see $WORK/run3a.log)"
+   fail "run T: https serve.py did not start (certificates in $CERTS?)"
 fi
+
+# ------------------------------------------------- run 3: netplay
+
+# $1 = run name, $2 = the link both peers load.
+netplay_run()
+{
+   NP_PORT=$(free_port)
+   PA=$(make_profile "host$1")
+   PB=$(make_profile "client$1")
+   HOME=$PA/home XDG_CONFIG_HOME=$PA/home/.config \
+      $LIMIT $NICE "$RA" --config="$PA/retroarch.cfg" --appendconfig="$PA/append.cfg" \
+      --verbose --log-file="$WORK/run$1a.log" -L "$CORE" "$2" \
+      --host --port="$NP_PORT" --nick=hosty --max-frames=600 \
+      </dev/null >"$WORK/run$1a.log.out" 2>&1 &
+   APID=$!
+   PIDS="$PIDS $APID"
+   if wait_port "$NP_PORT"; then
+      ra "$PB" "$WORK/run$1b.log" -L "$CORE" "$2" \
+         --connect=127.0.0.1 --port="$NP_PORT" --nick=clienty --max-frames=600
+      rcb=$?
+      wait "$APID"
+      rca=$?
+      crca=$(grep -o "\[Content\] CRC32: 0x[0-9a-f]*" "$WORK/run$1a.log" | head -n 1)
+      crcb=$(grep -o "\[Content\] CRC32: 0x[0-9a-f]*" "$WORK/run$1b.log" | head -n 1)
+      if [ $rca -eq 0 ] && [ $rcb -eq 0 ] \
+            && [ -n "$crca" ] && [ "$crca" = "$crcb" ] \
+            && grep -q "\[Netplay\] Connected to" "$WORK/run$1b.log" \
+            && ! grep -qi "CRC32s differ\|different game\|mismatch" \
+               "$WORK/run$1a.log" "$WORK/run$1b.log"; then
+         pass "run $1: netplay client connected, same ${crca#\[Content\] }, no mismatch"
+      else
+         fail "run $1: netplay (host exit $rca, client exit $rcb, see $WORK/run$1b.log)"
+      fi
+   else
+      fail "run $1: netplay host never listened (see $WORK/run$1a.log)"
+   fi
+}
+
+netplay_run 3 "$URL"
+netplay_run 3F "$URL#sha256=$FP"
 
 # ------------------------------------------------- run 4: media URL
 

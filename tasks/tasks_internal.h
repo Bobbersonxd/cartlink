@@ -112,6 +112,11 @@ bool task_push_netplay_nat_close(void *data);
  * like the file browser does. False if a download is already running. */
 bool task_push_url_content_load(const char *url);
 
+/* The user chose "Download anyway (unsafe)" after the certificate of
+ * url did not verify: the same download once more without the check
+ * (never for a login: url_fetch_to_cache_ex). */
+bool task_push_url_content_load_anyway(const char *url);
+
 /* "Load from URL" game lists. A link that answers with a folder
  * listing opens a menu level for it; the list is kept here, one per
  * open level, keyed by the menu stack depth of that level (stack size
