@@ -23,9 +23,23 @@ You do steps 0 to 4 once. They take about 20 minutes.
 
 ## 0. Install Caddy
 
+Cartlink needs **Caddy 2.8 or newer**.
+
 - Arch Linux: `sudo pacman -S caddy`
-- Debian 12+ / Ubuntu 24.04+: `sudo apt install caddy`
-  (older versions: see <https://caddyserver.com/docs/install>)
+- Debian / Ubuntu: the `caddy` that comes with Debian and Ubuntu is too old
+  (2.6), so install it from Caddy's own apt repository (these are the steps
+  from <https://caddyserver.com/docs/install>):
+
+      sudo apt install --yes debian-keyring debian-archive-keyring apt-transport-https curl
+      curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+      curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+      sudo chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+      sudo chmod o+r /etc/apt/sources.list.d/caddy-stable.list
+      sudo apt update
+      sudo apt install caddy
+
+Check it with `caddy version`: it must say `v2.8` or higher. The setup in
+step 4 stops (and changes nothing) if Caddy is older.
 
 ## 1. Check that your internet can host a server
 
@@ -41,8 +55,8 @@ Then friends can't reach your PC this way, so check first.
 
 4. Compare the two numbers.
    - **Same:** good, go on to step 2.
-   - **Different** (or the router's one starts with `100.`, `10.`, `192.168.`
-     or `172.`): **stop here.** Port forwarding will not work from your home.
+   - **Different** (or the router's one starts with `10.`, `192.168.`,
+     `100.64.` to `100.127.`, or `172.16.` to `172.31.`): **stop here.** Port forwarding will not work from your home.
      Ask your internet provider for a public IP address, or open an issue on
      Cartlink's issue tracker to ask about other ways.
 
@@ -130,6 +144,10 @@ in, for example:
 
 Remember: only files you have the right to share (see the top of this page).
 
+**Don't put links (symlinks) in the games folder.** Caddy follows them, so a
+link to another folder would show that folder to every friend. The setup and
+`cartlink-users` warn if they find one.
+
 Friends see the folders and files with these names. Files and folders that
 start with a dot are hidden.
 
@@ -188,7 +206,16 @@ after 10 wrong logins in 10 minutes:
 
 3. Start it: `sudo systemctl enable --now fail2ban` (or
    `sudo systemctl restart fail2ban` if it was already running).
-4. Check it: `sudo fail2ban-client status cartlink`
+4. Check that the jail is loaded: `sudo fail2ban-client status cartlink`.
+   If that fails, see `journalctl -u fail2ban`.
+5. Check that a ban really works, with a test address that is never used on
+   the internet:
+
+       sudo fail2ban-client set cartlink banip 192.0.2.1
+       sudo fail2ban-client status cartlink
+       sudo fail2ban-client set cartlink unbanip 192.0.2.1
+
+   The middle command should list `192.0.2.1` under "Banned IP list".
 
 A friend who opens the server for the first time gets one "wrong login"
 before Cartlink asks for the password; that is far below the limit.

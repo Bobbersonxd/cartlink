@@ -138,6 +138,11 @@ OUT3=$(CARTLINK_WORDLIST="$TMP/no-such-list" users add ted 2>&1) || OUT3=
 PASS_TED=$(sed -n 's/^Password for ted: //p' <<<"$OUT3")
 check "without a word list the password is 24 base32 characters ($PASS_TED)" \
 	bash -c '[[ $1 =~ ^[A-Z2-7]{24}$ ]]' _ "$PASS_TED"
+# A changed word list (here: one word made a duplicate) is not used.
+sed '2s/\t.*/\tacid/' "$HERE/eff_short_wordlist_1.txt" > "$TMP/changed-list.txt"
+OUT4=$(CARTLINK_WORDLIST="$TMP/changed-list.txt" users add una 2>&1) || OUT4=
+check "a changed word list (sha256 differs) falls back to base32" \
+	bash -c '[[ $1 =~ ^[A-Z2-7]{24}$ ]]' _ "$(sed -n 's/^Password for una: //p' <<<"$OUT4")"
 check "reload after add" reload
 
 check "generated password logs in" [ "$(code -u "sam:$PASS_GEN" "$URL/")" = 200 ]
@@ -191,6 +196,19 @@ check "cartlink-link --dir: every link parses and its download matches its finge
 check "cartlink-link --dir: odd names are %-encoded (#, &, %, +, *, space, UTF-8)" \
 	grep -qF "$URL/Game%20Boy/Odd%20%231%20%26%20100%25%2Bmore%2A%C3%A9.gb#sha256=$(sha "$ODD")" <<<"$DIRLINKS"
 
+# cartlink-link edges: a folder named "-...", a symlinked folder, "?" in the base URL.
+cp -r "$CARTLINK_ROOT/games" "$TMP/-dash"
+DASH=$(cd "$TMP" && "$HERE/cartlink-link" --dir -dash "$URL/" 2>/dev/null) || DASH=
+check "cartlink-link --dir works on a folder whose name starts with -" \
+	bash -c '[[ $(grep -c "^$2/Game%20Boy/.*#sha256=" <<<"$1") == 2 ]]' _ "$DASH" "$URL"
+ln -s "$CARTLINK_ROOT/games" "$TMP/games-link"
+check "cartlink-link --dir refuses a symlinked folder" \
+	bash -c '! "$1" --dir "$2" "$3" >/dev/null 2>&1' _ "$HERE/cartlink-link" "$TMP/games-link" "$URL/"
+check "cartlink-link --dir refuses a base URL with ?" \
+	bash -c '! "$1" --dir "$2" "$3" >/dev/null 2>&1' _ "$HERE/cartlink-link" "$CARTLINK_ROOT/games" "$URL/?a=1"
+check "cartlink-link --dir refuses a base URL with #" \
+	bash -c '! "$1" --dir "$2" "$3" >/dev/null 2>&1' _ "$HERE/cartlink-link" "$CARTLINK_ROOT/games" "$URL/#x"
+
 # --- fail2ban filter catches the failed logins in the real access log ---
 if command -v fail2ban-regex >/dev/null; then
 	for _ in 1 2 3; do code -u "sam:$PASS_BAD" "$URL/" >/dev/null; done
@@ -230,6 +248,13 @@ mkdir -p "$TMP/bad-link"; ln -s "$CARTLINK_ROOT" "$TMP/bad-link/root"
 check "layout check refuses a symlinked server folder" refused "$TMP/bad-link/root"
 mkdir -p "$TMP/bad-hard/games"; : > "$TMP/bad-hard/users"; ln "$TMP/bad-hard/users" "$TMP/bad-hard/other"
 check "layout check refuses a hard-linked users file" refused "$TMP/bad-hard"
+ln -s /etc "$CARTLINK_ROOT/games/linked-etc"
+check "--check-layout warns about links inside games/ (and still passes)" \
+	bash -c 'CARTLINK_ROOT="$1" "$2" --check-layout 2>&1 >/dev/null | grep -q "linked-etc"' _ "$CARTLINK_ROOT" "$HERE/setup.sh"
+check "cartlink-users list warns about links inside games/" \
+	bash -c '"$1" list 2>&1 >/dev/null | grep -q "has links in it"' _ "$HERE/cartlink-users"
+rm "$CARTLINK_ROOT/games/linked-etc"
+check "no warning without links" bash -c '[[ -z $("$1" list 2>&1 >/dev/null) ]]' _ "$HERE/cartlink-users"
 check "cartlink-users refuses a symlinked users file" \
 	bash -c '! CARTLINK_ROOT="$1" "$2" list >/dev/null 2>&1' _ "$TMP/bad-users" "$HERE/cartlink-users"
 printf 'zed $2a$14$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' > "$CARTLINK_ROOT/users" # no final newline
@@ -262,6 +287,10 @@ cat > "$FAKE/dpkg" <<'EOF'
 [[ ${FAKE_PKG:-} == debian && $1 == --verify ]] || exit 1
 [[ -z ${FAKE_VERIFY:-} ]] || { echo "$FAKE_VERIFY"; exit 1; }
 EOF
+cat > "$FAKE/caddy" <<'EOF'
+#!/usr/bin/env bash
+[[ $1 == version ]] && echo "${FAKE_CADDY_VERSION-v2.11.7 h1:test=}"
+EOF
 chmod +x "$FAKE"/*
 CF=$TMP/etc-caddy/Caddyfile
 mkdir -p "${CF%/*}"
@@ -286,6 +315,14 @@ check "Arch: modified -> changed" \
 	grep -qx 'Caddyfile: changed' <<<"$(sys arch FAKE_STATE='[modified]')"
 check "Arch: the replacement Caddyfile keeps the admin socket" \
 	grep -q 'admin "unix//run/caddy/admin.socket"' <<<"$(env PATH="$FAKE:$PATH" FAKE_PKG=arch "$HERE/setup.sh" --print-main 2>&1)"
+for v in 'v2.6.2 h1:x=' 'v2.7.6 h1:x=' 'v1.0.4' '(devel)' ''; do
+	OUTV=$(sys debian FAKE_MD5="$MD5" FAKE_CADDY_VERSION="$v")
+	check "Caddy '$v' is refused (needs 2.8 or newer)" \
+		bash -c 'grep -q "Cartlink needs Caddy 2.8 or newer" <<<"$1" && grep -q "Nothing was changed" <<<"$1" && ! grep -q "^Caddyfile:" <<<"$1"' _ "$OUTV"
+done
+for v in 'v2.8.0 h1:x=' 'v2.10.2 h1:x=' 'v2.11.0-beta.1 h1:x=' 'v3.0.0'; do
+	check "Caddy '$v' is accepted" grep -q '^caddy: .*ok' <<<"$(sys debian FAKE_MD5="$MD5" FAKE_CADDY_VERSION="$v")"
+done
 check "other systems: 'Arch and Debian/Ubuntu only'" \
 	grep -q 'Arch and Debian/Ubuntu only' <<<"$(sys none)"
 check "a real setup refuses the CARTLINK_CADDYFILE test override" \

@@ -69,11 +69,16 @@ one() { # one URL FILE
 
 dir() { # dir FOLDER BASE_URL
 	local folder=${1%/} base=$2 rel f h n=0
+	[[ -n $folder ]] || folder=/
+	[[ ! -L $folder ]] || die "'$1' is a symlink, refusing (give the real folder)"
 	[[ -d $folder ]] || die "'$1' is not a folder"
+	# A relative name starting with "-" must not look like an option to find.
+	[[ $folder == /* ]] || folder=./$folder
 	check_url "$base"
+	[[ $base != *'?'* ]] || die "the base URL can't have a '?' part, got '$base'"
 	[[ $base == */ ]] || base+=/
 	while IFS= read -r -d '' f; do
-		rel=${f#"$folder"/}
+		rel=${f#"${folder%/}"/}
 		if [[ $rel == *$'\n'* ]]; then
 			echo "cartlink-link: skipped a file with a line break in its name" >&2
 			continue

@@ -97,8 +97,8 @@ install_hint() {
 	if command -v pacman >/dev/null; then
 		echo "    sudo pacman -S caddy"
 	elif command -v apt-get >/dev/null; then
-		echo "    sudo apt install caddy"
-		echo "(Debian 12+ / Ubuntu 24.04+; older ones: https://caddyserver.com/docs/install)"
+		echo "    Caddy's own apt repository (Debian's and Ubuntu's caddy is too old),"
+		echo "    see SETUP.md step 0 or https://caddyserver.com/docs/install"
 	else
 		echo "    (Cartlink's setup supports Arch and Debian/Ubuntu only)"
 	fi
@@ -142,10 +142,41 @@ main_text() {
 		"$IMPORT_LINE"
 }
 
+# The site file uses basic_auth, a name Caddy knows from 2.8.0 on. Older ones
+# (Debian 12/13 and Ubuntu 24.04 ship 2.6.2) are refused before anything changes.
+check_caddy_version() {
+	local v major minor
+	v=$(caddy version 2>/dev/null | awk 'NR == 1 { print $1 }') || v=
+	if [[ $v =~ ^v?([0-9]+)\.([0-9]+)(\.|$|-) ]]; then
+		major=${BASH_REMATCH[1]} minor=${BASH_REMATCH[2]}
+	else
+		die "could not read Caddy's version (got '$v'). Cartlink needs Caddy 2.8 or newer. Nothing was changed."
+	fi
+	if ((10#$major < 2 || (10#$major == 2 && 10#$minor < 8))); then
+		die "Caddy $v is too old: Cartlink needs Caddy 2.8 or newer. On Debian/Ubuntu install it from Caddy's own apt repository (see SETUP.md, step 0). Nothing was changed."
+	fi
+	CADDY_VERSION=$v
+}
+
+# Caddy's file_server follows links, so a link in games/ shows what it points
+# to (e.g. a home folder) to every friend. Warn; never follow or change them.
+warn_links() {
+	local links
+	[[ -d $ROOT/games && ! -L $ROOT/games ]] || return 0
+	links=$(find "$ROOT/games" -type l -print 2>/dev/null | head -n 5)
+	[[ -z $links ]] && return 0
+	warn "$ROOT/games has links in it. Caddy shows what they point to to every friend:"
+	printf '    %s\n' "$links" >&2
+	warn "Remove them and copy the files in instead."
+}
+
 check_system() {
 	detect_system
 	[[ -n $SYSTEM ]] || die "Caddy from pacman or apt was not found. Cartlink's setup supports Arch and Debian/Ubuntu only."
 	echo "system: $SYSTEM"
+	command -v caddy >/dev/null || die "caddy is not installed"
+	check_caddy_version
+	echo "caddy: $CADDY_VERSION (2.8 or newer: ok)"
 	if [[ ! -f $MAIN_FILE ]]; then echo "Caddyfile: missing"
 	elif stock_caddyfile; then echo "Caddyfile: stock"
 	else echo "Caddyfile: changed"; fi
@@ -304,6 +335,7 @@ main() {
 		install_hint
 		exit 1
 	fi
+	check_caddy_version
 	detect_system
 	[[ -n $SYSTEM ]] || die "Caddy was not installed with pacman or apt. Cartlink's setup supports Arch and Debian/Ubuntu only."
 	getent group caddy >/dev/null || die "the caddy group is missing (reinstall caddy)"
@@ -313,6 +345,7 @@ main() {
 	name=${domain%.duckdns.org}
 
 	layout "$owner"
+	warn_links
 	token "$token_file"
 	log_dir
 	main_caddyfile
@@ -329,7 +362,7 @@ main() {
 
 case ${1:-} in
 	--print-site) [[ $# == 2 ]] || usage; render_site "$2" ;;
-	--check-layout) [[ $# == 1 ]] || usage; check_layout; echo "layout ok: $ROOT" ;;
+	--check-layout) [[ $# == 1 ]] || usage; check_layout; warn_links; echo "layout ok: $ROOT" ;;
 	--check-system) [[ $# == 1 ]] || usage; check_system ;;
 	--print-main) [[ $# == 1 ]] || usage; detect_system; main_text ;;
 	-h | --help | '') usage ;;

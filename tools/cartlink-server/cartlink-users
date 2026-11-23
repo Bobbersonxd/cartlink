@@ -17,6 +17,7 @@ HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 ROOT=${CARTLINK_ROOT:-/srv/cartlink}
 USERS=$ROOT/users
 WORDLIST=${CARTLINK_WORDLIST:-$HERE/eff_short_wordlist_1.txt}
+WORDLIST_SHA256=8f5ca830b8bffb6fe39c9736c024a00a6a6411adb3f83a9be8bfeeb6e067ae69
 WORDS=5       # 5 words from 1296: about 51 bits
 MIN_CHOSEN=12
 
@@ -72,11 +73,15 @@ rand_below() { # rand_below N
 }
 
 # The word list: 1296 lines "<dice digits><TAB><word>" (EFF short list #1).
-# Anything else (missing, changed) -> no list, and the base32 fallback is used.
+# Anything else (missing, changed: checked by its SHA-256) -> no list, and the
+# base32 fallback is used.
 load_words() {
 	local -n out=$1
+	local sum
 	out=()
 	[[ -f $WORDLIST && -r $WORDLIST ]] || return 0
+	sum=$(sha256sum < "$WORDLIST" 2>/dev/null) || return 0
+	[[ ${sum%% *} == "$WORDLIST_SHA256" ]] || return 0
 	mapfile -t out < <(awk -F'\t' 'NF == 2 && $1 ~ /^[1-6]{4}$/ && $2 ~ /^[a-z][a-z-]*[a-z]$/ { print $2 }' "$WORDLIST")
 	((${#out[@]} == 1296)) || out=()
 }
@@ -121,7 +126,7 @@ install_hint() {
 }
 
 cmd_add() { # cmd_add NAME generate|choose
-	local name=$1 how=$2 hash shown
+	local name=$1 how=$2 hash
 	check_name "$name"
 	need_users_file
 	if has_user "$name"; then die "$name already exists (remove them first to change the password)"; fi
@@ -134,12 +139,12 @@ cmd_add() { # cmd_add NAME generate|choose
 	if [[ -s $USERS && -n $(tail -c1 "$USERS") ]]; then echo >> "$USERS"; fi
 	printf '%s %s\n' "$name" "$hash" >> "$USERS" || die "could not write $USERS"
 	echo "Added $name."
+	warn_links
 	if [[ $how == generate ]]; then
-		shown=$PASSWORD
-		echo "Password for $name: $shown"
+		echo "Password for $name: $PASSWORD"
 		echo "This is shown only once. Send it to $name privately; only its hash is saved."
 	fi
-	unset PASSWORD shown
+	unset PASSWORD
 	reload_caddy
 }
 
@@ -155,8 +160,21 @@ cmd_remove() {
 	reload_caddy
 }
 
+# Caddy's file_server follows links, so a link in games/ shows what it points
+# to to every friend. Only a warning; nothing is changed.
+warn_links() {
+	local links
+	[[ -d $ROOT/games && ! -L $ROOT/games ]] || return 0
+	links=$(find "$ROOT/games" -type l -print 2>/dev/null | head -n 5)
+	[[ -z $links ]] && return 0
+	echo "WARNING: $ROOT/games has links in it. Caddy shows what they point to to every friend:" >&2
+	printf '    %s\n' "$links" >&2
+	echo "WARNING: remove them and copy the files in instead." >&2
+}
+
 cmd_list() {
 	need_users_file
+	warn_links
 	awk 'NF { print $1 }' "$USERS"
 }
 

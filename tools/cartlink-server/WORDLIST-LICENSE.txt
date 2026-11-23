@@ -18,8 +18,8 @@ https://www.eff.org/copyright).
 Attribution: word list (c) Electronic Frontier Foundation, https://www.eff.org/.
 
 cartlink-users picks 5 words from it at random (from /dev/urandom) for each
-new friend's password. If the file is missing or changed, cartlink-users uses
-24 random base32 characters instead.
+new friend's password. If the file is missing or changed (its SHA-256 is not the
+one above), cartlink-users uses 24 random base32 characters instead.
 
 This licence covers only the word list. The rest of Cartlink is under the
 GNU General Public License, version 3 or later (see COPYING at the top of the
