@@ -153,5 +153,7 @@ echo "== Done:"
 echo "   $OUT"
 echo "   $TARBALL"
 tar -tvzf "$OUT"
-tar -tzf "$OUT" | grep -qx "$PKG/cacert.pem" \
+# (Listed first: grep -q would cut the pipe and fail it under pipefail.)
+LISTING=$(tar -tzf "$OUT")
+printf '%s\n' "$LISTING" | grep -qx "$PKG/cacert.pem" \
    || { echo "cacert.pem is missing from $OUT" >&2; exit 1; }

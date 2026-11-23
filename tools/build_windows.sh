@@ -133,5 +133,7 @@ echo "== Done:"
 echo "   $ZIP"
 echo "   $TARBALL"
 unzip -l "$ZIP"
-unzip -l "$ZIP" | grep -q " Cartlink/cacert.pem$" \
+# (Listed first: grep -q would cut the pipe and fail it under pipefail.)
+LISTING=$(unzip -l "$ZIP")
+printf '%s\n' "$LISTING" | grep -q " Cartlink/cacert.pem$" \
    || { echo "cacert.pem is missing from $ZIP" >&2; exit 1; }
