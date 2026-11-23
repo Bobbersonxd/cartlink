@@ -70,7 +70,9 @@ get exactly that file:
 https://example.com/games/mygame.gb#sha256=3f2a...  (64 hex digits)
 ```
 
-The part after `#` is never sent to the server. If the downloaded (or
+The part after `#` is never sent to the server. Any other form that
+mentions sha256 (`#x=1&sha256=...`, `#sha256:...`, a wrong length) is
+refused as a broken fingerprint, never loaded unchecked. If the downloaded (or
 cached) file has a different SHA-256, it is deleted and refused:
 "Blocked: this file is not the one that was shared (fingerprint
 mismatch)." Make the fingerprint with `sha256sum mygame.gb` (Linux),
@@ -83,7 +85,13 @@ not valid you see "This site's security certificate is not valid.
 Someone may be changing the file on the way." with **Cancel** and
 **Download anyway (unsafe)**. If Cartlink finds no list of trusted
 certificates to check against, it says "Cartlink can't check this site's
-security certificate (no certificate list found)." with the same choice. *Download anyway* is offered only for
+security certificate (no certificate list found)." with the same choice.
+Certificates are checked against the system's list (the Windows root
+store, or the distribution's CA bundle) and then `cacert.pem`, Mozilla's
+list as published by curl (MPL-2.0), which the release archives put next
+to the program. On Windows both are always used, because the Windows
+store can lack roots on a fresh PC; elsewhere `cacert.pem` is used only
+if the system has no list. TLS older than 1.2 is refused. *Download anyway* is offered only for
 downloads without a login, for that one download. A link with a
 fingerprint is downloaded and then must match its fingerprint. The
 command line never offers *Download anyway*.
@@ -197,6 +205,16 @@ RetroArch folder (`~/.config/retroarch` on Linux) has them, they are
 `retroarch.cfg` is never imported.
 
 ## Build
+
+### Platforms
+- **Linux** and **Windows** (64-bit, cross-built on Linux): built and
+  tested; these are the release archives.
+- **macOS / iOS / tvOS**: the Xcode projects `RetroArch_Metal` and
+  `RetroArch_iOS13` have the bundled mbedTLS added
+  (`griffin/griffin_mbedtls_*.c`) and iOS ships `cacert.pem`, but this
+  is **untested on macOS/iOS**: no Mac was available to build it.
+- **Android**: `Android.mk` compiles the bundled mbedTLS; untested (no
+  Android build yet).
 
 ### Linux
 ```sh
