@@ -40,7 +40,8 @@ if ldd /t/bin/cartlink | grep "not found"; then exit 1; fi
 echo "   none"
 echo "== cartlink --version"
 /t/bin/cartlink --version
-apt-get install -y -qq --no-install-recommends gcc libc6-dev make python3 \
+# ca-certificates: the system CA bundle every desktop has (login tests).
+apt-get install -y -qq --no-install-recommends gcc libc6-dev make python3 ca-certificates \
    openssl zlib1g-dev >/dev/null
 tar -xzf /in/src.tar.gz -C /t/src --strip-components=1
 echo "== URL unit tests + fetch tests"
