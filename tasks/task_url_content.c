@@ -169,7 +169,7 @@ static void url_task_fetch(url_task_data_t *d)
          d->out_path, sizeof(d->out_path),
          d->challenge, sizeof(d->challenge),
          d->err, sizeof(d->err),
-         url_task_progress_cb, d);
+         url_task_progress_cb, d, NULL);
 #ifdef HAVE_THREADS
    slock_lock(d->lock);
 #endif
@@ -280,6 +280,7 @@ static void url_task_handler(retro_task_t *task)
          url_task_finish_msg(task,
                msg_hash_to_str(MSG_URL_CONTENT_NOT_A_FILE), true);
          break;
+      case URL_FETCH_CATALOG: /* a game list: err says where to open it */
       case URL_FETCH_TOO_BIG:
       case URL_FETCH_FAILED:
       default:
@@ -645,7 +646,7 @@ bool task_url_content_fetch_cli(const char *url,
    err[0] = '\0';
    res    = url_fetch_to_cache(url, cache_dir, NULL, NULL,
          out_path, len, NULL, 0, err, sizeof(err),
-         url_cli_progress_cb, &last_pct);
+         url_cli_progress_cb, &last_pct, NULL);
 
    switch (res)
    {
@@ -663,6 +664,7 @@ bool task_url_content_fetch_cli(const char *url,
       case URL_FETCH_NOT_A_FILE:
          url_cli_error(msg_hash_to_str(MSG_URL_CONTENT_NOT_A_FILE));
          break;
+      case URL_FETCH_CATALOG: /* a game list: err says where to open it */
       case URL_FETCH_TOO_BIG:
       case URL_FETCH_FAILED:
       default:

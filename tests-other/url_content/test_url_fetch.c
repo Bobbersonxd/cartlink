@@ -29,6 +29,7 @@
 #include <retro_timers.h>
 
 #include "../../network/url_fetch.h"
+#include "../../network/url_catalog.h"
 #include "../../network/url_archive_org.h"
 #include "../../network/url_logins.h"
 
@@ -142,7 +143,7 @@ static enum url_fetch_result fetch(const char *path, const char *cache,
    char err[256];
    url(u, sizeof(u), path);
    return url_fetch_to_cache(u, cache, user, pass, out, out_len,
-         ch, ch_len, err, sizeof(err), NULL, NULL);
+         ch, ch_len, err, sizeof(err), NULL, NULL, NULL);
 }
 
 /* GETs path + "?n=<counter>" (a new URL each time, so the cache never
@@ -200,7 +201,7 @@ static void test_ok_and_cached(void)
 
    url(u, sizeof(u), "/game.sfc");
    r = url_fetch_to_cache(u, cache, NULL, NULL, out, sizeof(out),
-         NULL, 0, err, sizeof(err), prog_cb, NULL);
+         NULL, 0, err, sizeof(err), prog_cb, NULL, NULL);
    EXPECT(r == URL_FETCH_OK);
    EXPECT(file_is_game(out));
    EXPECT(ends_with(out, "_game.sfc"));
@@ -586,6 +587,171 @@ static void test_clear_cache(void)
    EXPECT(url_fetch_clear_cache(p, NULL));
 }
 
+/* ---------- game lists (Caddy browse JSON) ---------- */
+
+static enum url_fetch_result fetch_cat(const char *full_url,
+      const char *cache, const char *user, const char *pass,
+      char *out, size_t out_len, char *err, size_t err_len,
+      struct url_catalog *cat)
+{
+   return url_fetch_to_cache(full_url, cache, user, pass, out, out_len,
+         NULL, 0, err, err_len, NULL, NULL, cat);
+}
+
+/* 1 if the file holds exactly the bytes "GBDUMMY". */
+static int file_is_gbdummy(const char *path)
+{
+   char buf[64];
+   size_t n;
+   FILE *f = fopen(path, "rb");
+   if (!f)
+      return 0;
+   n = fread(buf, 1, sizeof(buf), f);
+   fclose(f);
+   return n == 7 && !memcmp(buf, "GBDUMMY", 7);
+}
+
+static void test_fetch_catalog_root(void)
+{
+   char cache[300], out[512], err[256], u[256];
+   struct url_catalog cat;
+   enum url_fetch_result r;
+   memset(&cat, 0, sizeof(cat));
+   new_cache(cache, sizeof(cache), "cat-root");
+   url(u, sizeof(u), "/cat/");
+   r = fetch_cat(u, cache, NULL, NULL, out, sizeof(out), err, sizeof(err),
+         &cat);
+   EXPECT(r == URL_FETCH_CATALOG);
+   EXPECT(cat.count == 2);
+   if (cat.count == 2)
+   {
+      EXPECT_STR(cat.entries[0].name, "Game Boy");
+      EXPECT(cat.entries[0].is_dir);
+      EXPECT(ends_with(cat.entries[0].url, "/cat/Game%20Boy/"));
+      EXPECT_STR(cat.entries[1].name, "x.gb");
+      EXPECT(!cat.entries[1].is_dir);
+   }
+   EXPECT_STR(out, "");
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+   url_catalog_free(&cat);
+
+   /* A list is never answered from the cache: same URL again is a
+    * fresh list, and the cache stays empty. */
+   memset(&cat, 0, sizeof(cat));
+   r = fetch_cat(u, cache, NULL, NULL, out, sizeof(out), err, sizeof(err),
+         &cat);
+   EXPECT(r == URL_FETCH_CATALOG);
+   EXPECT(cat.count == 2);
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+   url_catalog_free(&cat);
+}
+
+static void test_fetch_catalog_file_from_listing(void)
+{
+   char cache[300], out[512], err[256], u[256];
+   struct url_catalog cat;
+   enum url_fetch_result r;
+   memset(&cat, 0, sizeof(cat));
+   new_cache(cache, sizeof(cache), "cat-file");
+   url(u, sizeof(u), "/cat/Game%20Boy/");
+   r = fetch_cat(u, cache, NULL, NULL, out, sizeof(out), err, sizeof(err),
+         &cat);
+   EXPECT(r == URL_FETCH_CATALOG);
+   EXPECT(cat.count == 1);
+   if (cat.count == 1)
+   {
+      EXPECT_STR(cat.entries[0].name, "Space & Time #2.gb");
+      r = fetch_cat(cat.entries[0].url, cache, NULL, NULL,
+            out, sizeof(out), err, sizeof(err), NULL);
+      EXPECT(r == URL_FETCH_OK);
+      EXPECT(file_is_gbdummy(out));
+   }
+   url_catalog_free(&cat);
+}
+
+static void test_fetch_catalog_empty(void)
+{
+   char cache[300], out[512], err[256], u[256];
+   struct url_catalog cat;
+   enum url_fetch_result r;
+   memset(&cat, 0, sizeof(cat));
+   new_cache(cache, sizeof(cache), "cat-empty");
+   url(u, sizeof(u), "/cat/empty/");
+   r = fetch_cat(u, cache, NULL, NULL, out, sizeof(out), err, sizeof(err),
+         &cat);
+   EXPECT(r == URL_FETCH_CATALOG);
+   EXPECT(cat.count == 0);
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+   url_catalog_free(&cat);
+}
+
+static void test_fetch_catalog_login(void)
+{
+   char cache[300], out[512], err[256], u[256];
+   struct url_catalog cat;
+   enum url_fetch_result r;
+   memset(&cat, 0, sizeof(cat));
+   new_cache(cache, sizeof(cache), "cat-login");
+
+   url(u, sizeof(u), "/basic/cat/");
+   r = fetch_cat(u, cache, NULL, NULL, out, sizeof(out), err, sizeof(err),
+         &cat);
+   EXPECT(r == URL_FETCH_NEED_LOGIN);
+   url_catalog_free(&cat);
+
+   EXPECT(url_logins_set("127.0.0.1", "bob", "pw"));
+   memset(&cat, 0, sizeof(cat));
+   r = fetch_cat(u, cache, NULL, NULL, out, sizeof(out), err, sizeof(err),
+         &cat);
+   EXPECT(r == URL_FETCH_CATALOG);
+   EXPECT(cat.count == 2);
+   if (cat.count == 2)
+   {
+      EXPECT_STR(cat.entries[1].name, "x.gb");
+      r = fetch_cat(cat.entries[1].url, cache, NULL, NULL,
+            out, sizeof(out), err, sizeof(err), NULL);
+      EXPECT(r == URL_FETCH_OK);
+      EXPECT(file_is_gbdummy(out));
+   }
+   url_catalog_free(&cat);
+   EXPECT(url_logins_forget_all());
+}
+
+static void test_fetch_catalog_null_sink(void)
+{
+   char cache[300], out[512], err[256], u[256];
+   enum url_fetch_result r;
+   new_cache(cache, sizeof(cache), "cat-null");
+   url(u, sizeof(u), "/cat/");
+   r = fetch_cat(u, cache, NULL, NULL, out, sizeof(out), err, sizeof(err),
+         NULL);
+   EXPECT(r == URL_FETCH_CATALOG);
+   EXPECT_STR(err, "This link is a game list. Open it from the menu: Load Content > Load from URL.");
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+}
+
+/* JSON that is not a listing is a file, as before. */
+static void test_fetch_plain_json_is_file(void)
+{
+   char cache[300], out[512], out2[512];
+   enum url_fetch_result r;
+   new_cache(cache, sizeof(cache), "plain-json");
+   r = fetch("/plain.json", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_text(out, "{\"hi\":1}"));
+   EXPECT(count_files(cache, NULL, 0, NULL) == 1);
+   r = fetch("/plain.json", cache, NULL, NULL, out2, sizeof(out2), NULL, 0);
+   EXPECT(r == URL_FETCH_CACHED);
+   EXPECT(!strcmp(out, out2));
+}
+
+static void test_fetch_accept_header(void)
+{
+   char buf[256];
+   EXPECT(get_text("/acceptlog", buf, sizeof(buf)));
+   EXPECT_STR(buf, "accept:*/*, application/json;q=0.9");
+}
+
 /* ---------- https (needs the port and test CA from the Makefile) ---------- */
 
 static enum url_fetch_result fetch_s(const char *host, const char *path,
@@ -595,7 +761,33 @@ static enum url_fetch_result fetch_s(const char *host, const char *path,
    char u[256];
    snprintf(u, sizeof(u), "https://%s:%d%s", host, g_sport, path);
    return url_fetch_to_cache(u, cache, user, pass, out, out_len,
-         NULL, 0, err, err_len, NULL, NULL);
+         NULL, 0, err, err_len, NULL, NULL, NULL);
+}
+
+/* Runs with the system CAs (the test CA untrusted): sending Accept must
+ * not switch certificate checks on, so anonymous https still works,
+ * for a file and for a list. */
+static void test_fetch_no_verify_change(void)
+{
+   char cache[300], out[512], err[256];
+   struct url_catalog cat;
+   enum url_fetch_result r;
+   new_cache(cache, sizeof(cache), "https-noverify");
+   r = fetch_s("localhost", "/plain.json", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_text(out, "{\"hi\":1}"));
+
+   memset(&cat, 0, sizeof(cat));
+   {
+      char u[256];
+      snprintf(u, sizeof(u), "https://localhost:%d/cat/", g_sport);
+      r = fetch_cat(u, cache, NULL, NULL, out, sizeof(out),
+            err, sizeof(err), &cat);
+   }
+   EXPECT(r == URL_FETCH_CATALOG);
+   EXPECT(cat.count == 2);
+   url_catalog_free(&cat);
 }
 
 static void test_https(void)
@@ -615,6 +807,8 @@ static void test_https(void)
          out, sizeof(out), err, sizeof(err));
    EXPECT(r == URL_FETCH_OK);
    EXPECT(file_is_game(out));
+
+   test_fetch_no_verify_change();
 
    auth_log();
    new_cache(cache, sizeof(cache), "https-untrusted");
@@ -931,6 +1125,13 @@ int main(int argc, char **argv)
    test_archive_login();
    test_archive_keys_http();
    test_clear_cache();
+   test_fetch_catalog_root();
+   test_fetch_catalog_file_from_listing();
+   test_fetch_catalog_empty();
+   test_fetch_catalog_login();
+   test_fetch_catalog_null_sink();
+   test_fetch_plain_json_is_file();
+   test_fetch_accept_header();
    if (g_sport > 0)
       test_https();
    else

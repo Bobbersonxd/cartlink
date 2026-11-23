@@ -257,9 +257,17 @@ static bool cat_add(struct url_catalog *c, size_t *cap,
       const struct cat_elem *e)
 {
    struct url_catalog_entry ent;
+   char name[sizeof(e->name)];
+   size_t n;
+
+   /* Caddy names folders "Name/": drop that one slash. */
+   strlcpy(name, e->name, sizeof(name));
+   n = strlen(name);
+   if (e->is_dir && n > 1 && name[n - 1] == '/')
+      name[n - 1] = '\0';
 
    if (     e->long_url
-         || !cat_entry_name(ent.name, sizeof(ent.name), e->name)
+         || !cat_entry_name(ent.name, sizeof(ent.name), name)
          || !cat_entry_url(ent.url, sizeof(ent.url), c->base, e->url))
       return true;
    if (c->count >= URL_CATALOG_MAX)

@@ -39,6 +39,8 @@
 #define UF_STALL_USEC   30000000   /* give up after 30 s without data */
 #define UF_MAX_HOPS     10
 #define UF_MAX_BODY     ((size_t)2048 * 1024 * 1024)   /* 2 GiB */
+/* Files first; Caddy answers a folder with its JSON listing. */
+#define UF_ACCEPT       "Accept: */*, application/json;q=0.9\r\n"
 
 enum uf_auth
 {
@@ -182,13 +184,16 @@ static bool uf_length_matches(const char *value, size_t len)
 
 /* Blocking GET. Fills r; returns false only if no request could be
  * made at all (bad URL / out of memory). Requests that carry a login
- * or keys (non-empty headers) over https need a verified certificate:
- * without one nothing is sent and r->tls_error says why. */
-static bool uf_get(const char *url, const char *headers_or_null,
-      struct uf_response *r, url_fetch_progress_t cb, void *ud)
+ * or keys (non-empty auth) over https need a verified certificate:
+ * without one nothing is sent and r->tls_error says why. The Accept
+ * header is separate from auth so it never turns that check on. */
+static bool uf_get(const char *url, const char *auth_or_null,
+      bool accept_json, struct uf_response *r,
+      url_fetch_progress_t cb, void *ud)
 {
-   bool verify = headers_or_null && *headers_or_null
+   bool verify = auth_or_null && *auth_or_null
       && string_starts_with_case_insensitive(url, "https://");
+   char headers[UF_HDR_LEN + sizeof(UF_ACCEPT)];
    struct http_connection_t *conn;
    struct http_t *http;
    retro_time_t last_change;
@@ -205,8 +210,14 @@ static bool uf_get(const char *url, const char *headers_or_null,
       net_http_connection_free(conn);
       return false;
    }
-   if (headers_or_null && *headers_or_null)
-      net_http_connection_set_headers(conn, headers_or_null);
+   headers[0] = '\0';
+   if (accept_json)
+      strlcpy(headers, UF_ACCEPT, sizeof(headers));
+   if (auth_or_null && *auth_or_null)
+      strlcat(headers, auth_or_null, sizeof(headers));
+   if (headers[0])
+      net_http_connection_set_headers(conn, headers);
+   url_content_wipe(headers, sizeof(headers));
    net_http_connection_set_user_agent(conn, "RetroArch");
    net_http_connection_set_follow_redirects(conn, false);
    net_http_connection_set_max_body(conn, UF_MAX_BODY);
@@ -331,7 +342,8 @@ static enum uf_auth uf_pick_auth(char *auth, size_t auth_len,
 enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
       const char *user_or_null, const char *pass_or_null,
       char *out_path, size_t out_len, char *challenge, size_t ch_len,
-      char *err, size_t err_len, url_fetch_progress_t cb, void *ud)
+      char *err, size_t err_len, url_fetch_progress_t cb, void *ud,
+      struct url_catalog *catalog_or_null)
 {
    char fixed[UF_URL_LEN];
    char cur[UF_URL_LEN];
@@ -349,6 +361,7 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
    char part_path[PATH_MAX_LENGTH];
    const char *disp;
    const char *clen;
+   const char *ctype;
    struct uf_response r;
    enum url_fetch_result ret = URL_FETCH_FAILED;
    bool have_login           = false;
@@ -366,6 +379,9 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
       challenge[0] = '\0';
    if (err && err_len)
       err[0] = '\0';
+   /* Always safe to url_catalog_free afterwards. */
+   if (catalog_or_null)
+      memset(catalog_or_null, 0, sizeof(*catalog_or_null));
 
    if (string_is_empty(url) || string_is_empty(cache_dir))
    {
@@ -424,7 +440,7 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
             downgraded, have_login, user, pass);
 
       uf_response_free(&r);
-      if (!uf_get(cur, auth, &r, cb, ud))
+      if (!uf_get(cur, auth, true, &r, cb, ud))
       {
          uf_set_err(err, err_len, "Bad URL.");
          goto end;
@@ -453,7 +469,7 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
          if (retry)
          {
             uf_response_free(&r);
-            if (!uf_get(cur, auth, &r, cb, ud))
+            if (!uf_get(cur, auth, true, &r, cb, ud))
             {
                uf_set_err(err, err_len, "Bad URL.");
                goto end;
@@ -543,6 +559,30 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
    {
       uf_set_err(err, err_len, "Download was cut short.");
       goto end;
+   }
+
+   /* A game list (Caddy folder listing): nothing goes to the cache.
+    * cur is the URL after redirects, so the entries resolve against
+    * the folder that actually answered. JSON that is not a listing
+    * falls through and is saved as a file, as before. */
+   ctype = uf_header(r.headers, "Content-Type");
+   if (ctype && string_starts_with_case_insensitive(ctype, "application/json"))
+   {
+      struct url_catalog tmp;
+      memset(&tmp, 0, sizeof(tmp));
+      if (url_catalog_parse((const char*)r.data, r.len, cur, &tmp))
+      {
+         if (catalog_or_null)
+            *catalog_or_null = tmp;
+         else
+         {
+            url_catalog_free(&tmp);
+            uf_set_err(err, err_len, "This link is a game list. Open it from the menu: Load Content > Load from URL.");
+         }
+         ret = URL_FETCH_CATALOG;
+         goto end;
+      }
+      url_catalog_free(&tmp);
    }
 
    if (url_content_looks_like_html(r.data, r.len))

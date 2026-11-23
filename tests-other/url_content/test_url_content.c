@@ -875,6 +875,28 @@ static void test_catalog_parse_unsafe(void)
    url_catalog_free(&c);
 }
 
+/* Caddy names folders "Name/": one trailing slash is dropped for
+ * folders only; files, "/" alone and "a/b/" are still refused. */
+static void test_catalog_parse_dir_slash(void)
+{
+   struct url_catalog c;
+   EXPECT(cat_parse("["
+         "{\"name\":\"Game Boy/\",\"is_dir\":true,\"url\":\"./Game%20Boy/\"},"
+         "{\"name\":\"f.gb/\",\"is_dir\":false,\"url\":\"./f.gb\"},"
+         "{\"name\":\"/\",\"is_dir\":true,\"url\":\"./z/\"},"
+         "{\"name\":\"a/b/\",\"is_dir\":true,\"url\":\"./a/b/\"},"
+         "{\"name\":\"two//\",\"is_dir\":true,\"url\":\"./two/\"}"
+         "]", &c));
+   EXPECT(c.count == 1);
+   if (c.count == 1)
+   {
+      EXPECT_STR(c.entries[0].name, "Game Boy");
+      EXPECT(c.entries[0].is_dir);
+      EXPECT_STR(c.entries[0].url, "https://h.example/games/Game%20Boy/");
+   }
+   url_catalog_free(&c);
+}
+
 static void test_catalog_parse_names(void)
 {
    struct url_catalog c;
@@ -1043,6 +1065,7 @@ int main(void)
    test_catalog_parse_basic();
    test_catalog_parse_sort();
    test_catalog_parse_unsafe();
+   test_catalog_parse_dir_slash();
    test_catalog_parse_names();
    test_catalog_parse_edges();
    test_catalog_parse_not_listing();

@@ -24,6 +24,28 @@ HUGE = 3 * 1024 * 1024 * 1024
 LOGIN_POSTS = 0   # POSTs that reached /xauthn/?op=login
 AUTH_LOG = []     # Authorization scheme of each /basic/ and /digest/ GET
 SLOW = 16 * 1024 * 1024
+LAST_ACCEPT = ""  # Accept header of the latest GET
+GBDUMMY = b"GBDUMMY"
+
+
+def caddy_item(name, is_dir, url, size):
+    # One entry the way Caddy's file_server browse sends it as JSON
+    # (folder names end in "/").
+    return {"name": name, "size": size, "url": url,
+            "mod_time": "2026-11-01T12:00:00Z",
+            "mode": 2147484141 if is_dir else 420,
+            "is_dir": is_dir, "is_symlink": False}
+
+
+# Listings under /cat/ (path after the prefix, decoded).
+CATALOG = {
+    "/cat/": [caddy_item("x.gb", False, "./x.gb", 7),
+              caddy_item("Game Boy/", True, "./Game%20Boy/", 4096)],
+    "/cat/Game Boy/": [caddy_item("Space & Time #2.gb", False,
+                                  "./Space%20&%20Time%20%232.gb", 7)],
+    "/cat/empty/": [],
+}
+CATALOG_FILES = {"/cat/x.gb", "/cat/Game Boy/Space & Time #2.gb"}
 
 
 def md5(s):
@@ -156,10 +178,46 @@ class Handler(http.server.BaseHTTPRequestHandler):
         auth = self.headers.get("Authorization")
         AUTH_LOG.append(auth.split(" ", 1)[0] if auth else "none")
 
+    # Caddy-style folder listing: JSON only when the client accepts it,
+    # else an HTML page. True if path was a catalog route.
+    def catalog(self, path):
+        import json
+        import urllib.parse
+        p = urllib.parse.unquote(path)
+        if p in CATALOG:
+            if "application/json" in self.headers.get("Accept", ""):
+                self.send_body(200, json.dumps(CATALOG[p]).encode(),
+                               "application/json")
+            else:
+                self.send_body(200, PAGE, "text/html; charset=utf-8")
+            return True
+        if p in CATALOG_FILES:
+            self.send_body(200, GBDUMMY)
+            return True
+        return False
+
     def do_GET(self):
-        global AUTH_LOG
+        global AUTH_LOG, LAST_ACCEPT
         path = self.path
         port = self.server.server_address[1]
+        LAST_ACCEPT = self.headers.get("Accept", "")
+        if path.startswith("/acceptlog"):
+            self.send_body(200, ("accept:" + LAST_ACCEPT).encode(),
+                           "text/plain")
+            return
+        if path == "/plain.json":
+            self.send_body(200, b'{"hi":1}', "application/json")
+            return
+        if path.startswith("/cat/") and self.catalog(path):
+            return
+        if path.startswith("/basic/cat/"):
+            self.log_auth()
+            if not self.basic_ok():
+                self.send_body(401, b"", "text/plain", [
+                    ("WWW-Authenticate", 'Basic realm="' + REALM + '"')])
+            elif not self.catalog(path[len("/basic"):]):
+                self.send_body(404, b"not found", "text/plain")
+            return
         if path.startswith("/xauthn/count"):
             self.send_body(200, ("%d" % LOGIN_POSTS).encode(), "text/plain")
             return

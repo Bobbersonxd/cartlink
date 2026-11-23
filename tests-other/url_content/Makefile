@@ -52,6 +52,7 @@ FETCH_SRCS := test_url_fetch.c \
         ../../network/url_fetch.c \
         ../../network/url_archive_org.c \
         ../../network/url_content.c \
+        ../../network/url_catalog.c \
         $(LRC)/formats/json/rjson.c \
         $(LRC)/streams/interface_stream.c \
         $(LRC)/streams/memory_stream.c \
@@ -101,7 +102,7 @@ obj-mbed/%.o: $(MBED_DIR)/%.c
 $(MBED_LIB): $(MBED_OBJS)
 	@$(AR) rcs $@ $(MBED_OBJS)
 
-$(FETCH_BIN): $(FETCH_SRCS) $(MBED_LIB) ../../network/url_fetch.h ../../network/url_archive_org.h ../../network/url_content.h ../../network/url_logins.h $(LRC)/include/net/net_http.h $(LRC)/include/net/net_socket_ssl.h
+$(FETCH_BIN): $(FETCH_SRCS) $(MBED_LIB) ../../network/url_fetch.h ../../network/url_archive_org.h ../../network/url_catalog.h ../../network/url_content.h ../../network/url_logins.h $(LRC)/include/net/net_http.h $(LRC)/include/net/net_socket_ssl.h
 	$(CC) $(FETCH_CFLAGS) -o $@ $(FETCH_SRCS) $(MBED_LIB)
 
 $(CERTS):
