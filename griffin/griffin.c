@@ -1599,7 +1599,10 @@ SSL
 /* The bundled mbedTLS (deps/mbedtls, 2.28) is not part of this unity
  * file: its sources clash when included together. Builds with
  * HAVE_BUILTINMBEDTLS compile deps/mbedtls/sources.mk's list as
- * separate files (see pkg/android/phoenix-common/jni/Android.mk). */
+ * separate files (see pkg/android/phoenix-common/jni/Android.mk), or
+ * add griffin/griffin_mbedtls_*.c, which split that list into sets
+ * that compile together (the Xcode projects RetroArch_Metal and
+ * RetroArch_iOS13 do). */
 
 #include "../libretro-common/net/net_socket_ssl_mbed.c"
 #endif

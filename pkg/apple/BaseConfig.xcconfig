@@ -1,3 +1,4 @@
+// Modified by Cartlink contributors, 2026.
 //
 //  BaseConfig.xcconfig
 //  RetroArch
@@ -152,6 +153,9 @@ SRCBASE  = $(SRCROOT)/../..
 DEPS_DIR = $(SRCBASE)/deps
 
 HEADER_SEARCH_PATHS = $(inherited) $(DEPS_DIR)
+// Bundled mbedTLS 2.28: its headers include "mbedtls/<x>.h" (compiled
+// through griffin/griffin_mbedtls_*.c).
+HEADER_SEARCH_PATHS = $(inherited) $(DEPS_DIR)/mbedtls
 HEADER_SEARCH_PATHS = $(inherited) $(DEPS_DIR)/7zip
 HEADER_SEARCH_PATHS = $(inherited) $(DEPS_DIR)/SPIRV-Cross
 HEADER_SEARCH_PATHS = $(inherited) $(DEPS_DIR)/glslang
