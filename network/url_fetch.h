@@ -89,7 +89,10 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
  * - Without a login, a failed check is CERT_INVALID (nothing sent or
  *   kept, err says so): the caller may ask the user and call again with
  *   download_anyway = true, which skips the check for this download's
- *   requests that carry no login (never for a login or keys).
+ *   requests that carry no login (never for a login or keys). Such a
+ *   file is marked unverified in the cache (<prefix>.unverified): a
+ *   later load without a fingerprint deletes it and downloads again
+ *   with the check; a fingerprinted load may use it if it matches.
  * - A link ending in #sha256=<64 hex> is downloaded without the check
  *   (no login) but the file (or game list) must hash to it: otherwise
  *   it is deleted and BLOCKED_FINGERPRINT. Cache hits for such a link

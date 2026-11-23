@@ -113,6 +113,24 @@ static int count_files(const char *dir, char *first, size_t flen,
    return n;
 }
 
+/* Number of "Download anyway" marks (*.unverified) in dir. */
+static int count_marks(const char *dir)
+{
+   int n = 0;
+   struct dirent *e;
+   DIR *d = opendir(dir);
+   if (!d)
+      return 0;
+   while ((e = readdir(d)))
+   {
+      size_t l = strlen(e->d_name);
+      if (l > 11 && !strcmp(e->d_name + l - 11, ".unverified"))
+         n++;
+   }
+   closedir(d);
+   return n;
+}
+
 static long file_size(const char *path)
 {
    struct stat st;
@@ -1099,6 +1117,20 @@ static void test_https_cert(void)
          out, sizeof(out), err, sizeof(err), NULL, true);
    EXPECT(r == URL_FETCH_OK);
    EXPECT(file_is_game(out));
+   /* ... once: the copy is marked unverified, so a normal load later
+    * is not answered from the cache. It downloads again with the
+    * check (here the choice comes back) and the unchecked copy goes. */
+   EXPECT(count_marks(cache) == 1);
+   EXPECT(count_files(cache, NULL, 0, NULL) == 2);
+   r = fetch_s("localhost", "/game.sfc", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_CERT_INVALID);
+   EXPECT(out[0] == '\0');
+   EXPECT(count_files(cache, NULL, 0, NULL) == 1); /* the mark only */
+   r = fetch_s_any("localhost", "/game.sfc", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err), NULL, true);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_game(out));
    r = fetch_s_any("localhost", "/plain.json", cache, NULL, NULL,
          out, sizeof(out), err, sizeof(err), NULL, true);
    EXPECT(r == URL_FETCH_OK);
@@ -1173,6 +1205,22 @@ static void test_https_cert(void)
    /* Trusted certificate: no login needed, it just works; the wrong
     * name on it does not. */
    ssl_socket_set_ca_bundle_override(g_ca);
+   /* The "anyway" copy just taken: a fingerprint vouches for it, a
+    * normal load replaces it with a checked download (mark gone),
+    * which is then reused. */
+   EXPECT(count_marks(cache) == 1);
+   r = fetch_s("localhost", "/game.sfc#sha256=" GAME_FP, cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_CACHED);
+   EXPECT(count_marks(cache) == 1);
+   r = fetch_s("localhost", "/game.sfc", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_game(out));
+   EXPECT(count_marks(cache) == 0);
+   r = fetch_s("localhost", "/game.sfc", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_CACHED);
    new_cache(cache, sizeof(cache), "https-cert-ok");
    r = fetch_s("localhost", "/game.sfc", cache, NULL, NULL,
          out, sizeof(out), err, sizeof(err));

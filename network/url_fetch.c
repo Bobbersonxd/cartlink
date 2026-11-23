@@ -429,8 +429,21 @@ static bool uf_part_is_stale(const char *path)
    return difftime(time(NULL), st.st_mtime) > UF_PART_STALE_SEC;
 }
 
+/* <prefix>.unverified marks a link's cached file as taken with
+ * "Download anyway (unsafe)": no certificate check. A cache name never
+ * starts its name part with a dot, so it can't clash with a file. */
+#define UF_UNVERIFIED_SUFFIX ".unverified"
+
+static void uf_marker_path(char *out, size_t len, const char *cache_dir,
+      const char *prefix)
+{
+   fill_pathname_join_special(out, cache_dir, prefix, len);
+   strlcat(out, UF_UNVERIFIED_SUFFIX, len);
+}
+
 /* Scans cache_dir for <prefix>*: deletes leftover (stale) .part files
- * and copies the first finished file name into found (empty if none). */
+ * and copies the first finished file name into found (empty if none).
+ * The unverified marker is never a found file. */
 static void uf_scan_cache(const char *cache_dir, const char *prefix,
       bool delete_parts, char *found, size_t found_len)
 {
@@ -444,6 +457,8 @@ static void uf_scan_cache(const char *cache_dir, const char *prefix,
       if (     !name
             || strncmp(name, prefix, UF_PREFIX_LEN) != 0
             || retro_dirent_is_dir(dir, NULL))
+         continue;
+      if (string_is_equal(name + UF_PREFIX_LEN, UF_UNVERIFIED_SUFFIX))
          continue;
       if (string_ends_with(name, ".part"))
       {
@@ -599,6 +614,7 @@ enum url_fetch_result url_fetch_to_cache_ex(const char *url,
    char name[PATH_MAX_LENGTH];
    char final_path[PATH_MAX_LENGTH];
    char part_path[PATH_MAX_LENGTH];
+   char marker[PATH_MAX_LENGTH];  /* <prefix>.unverified */
    const char *disp;
    const char *clen;
    /* On the heap: the sink holds the first 64 KiB of the body. */
@@ -608,6 +624,7 @@ enum url_fetch_result url_fetch_to_cache_ex(const char *url,
    bool downgraded           = false;
    bool has_fp               = false;
    bool skip_verify          = false;
+   bool unverified           = false; /* taken with "Download anyway" */
    bool tls_auth             = false; /* the refused request had a login */
    bool typed_login          = false;
    bool login_sent           = false;
@@ -675,7 +692,18 @@ enum url_fetch_result url_fetch_to_cache_ex(const char *url,
       goto end;
    }
 
+   uf_marker_path(marker, sizeof(marker), cache_dir, prefix);
    uf_scan_cache(cache_dir, prefix, true, found, sizeof(found));
+   /* A file taken with "Download anyway" was never checked: only a
+    * fingerprint can vouch for it. Otherwise it is downloaded again
+    * (with the certificate check), never reused silently. */
+   if (found[0] && !has_fp && path_is_valid(marker))
+   {
+      fill_pathname_join_special(final_path, cache_dir, found,
+            sizeof(final_path));
+      filestream_delete(final_path);
+      found[0] = '\0';
+   }
    if (found[0])
    {
       /* Checked again on every use: the file may predate the checks
@@ -960,6 +988,7 @@ enum url_fetch_result url_fetch_to_cache_ex(const char *url,
 
    /* Keep the finished .part (closed, not deleted), check its
     * fingerprint, then rename: a wrong file never gets the real name. */
+   unverified = skip_verify && !has_fp;
    if (r->sink.file)
    {
       bool ok = filestream_close(r->sink.file) == 0;
@@ -971,12 +1000,21 @@ enum url_fetch_result url_fetch_to_cache_ex(const char *url,
          ret = URL_FETCH_BLOCKED_FINGERPRINT;
          goto end;
       }
+      /* Taken without the certificate check (and no fingerprint):
+       * marked before the file gets its name, so it is never seen
+       * as a checked file. */
+      if (     ok && unverified
+            && !filestream_write_file(marker, "", 0))
+         ok = false;
       if (!ok || filestream_rename(part_path, final_path) != 0)
       {
          filestream_delete(part_path);
          uf_set_err(err, err_len, "Cannot write the cache file.");
          goto end;
       }
+      /* A checked (or fingerprinted) file replaces an older mark. */
+      if (!unverified && path_is_valid(marker))
+         filestream_delete(marker);
    }
    else
    {
