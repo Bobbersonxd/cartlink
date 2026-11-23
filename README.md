@@ -1,345 +1,238 @@
-[![Build Status](https://travis-ci.org/libretro/RetroArch.svg?branch=master)](https://travis-ci.org/libretro/RetroArch)
-[![Coverity Scan Build Status](https://scan.coverity.com/projects/8936/badge.svg)](https://scan.coverity.com/projects/retroarch)
-[![Crowdin](https://badges.crowdin.net/retroarch/localized.svg)](https://crowdin.com/project/retroarch)
-
-# RetroArch
-
-RetroArch is the reference frontend for the libretro API.
-Popular examples of implementations for this API includes video game system emulators and game engines as well as
-more generalized 3D programs.
-These programs are instantiated as dynamic libraries. We refer to these as "libretro cores".
-
-![XMB menu driver](docs/XMB-main-menu.jpg "XMB menu driver")
-
-![rgui menu driver](docs/rgui-main-menu.jpg "rgui menu driver")
-
-![glui menu driver](docs/glui-main-menu.jpg "glui menu driver")
-
-![ozone menu driver](docs/ozone-main-menu.jpg "ozone menu driver")
-
-## libretro
-
-[libretro](https://www.libretro.com) is an API that exposes generic audio/video/input callbacks.
-A frontend for libretro (such as RetroArch) handles video output, audio output, input and application lifecycle.
-A libretro core written in portable C or C++ can run seamlessly on many platforms with very little to no porting effort.
-
-While RetroArch is the reference frontend for libretro, several other projects have used the libretro
-interface to include support for emulators and/or game engines. libretro is completely open and free for anyone to use.
-
-[libretro API header](https://github.com/libretro/RetroArch/blob/master/libretro-common/include/libretro.h)
-
-## Binaries
-
-Latest binaries are currently hosted on the [buildbot](http://buildbot.libretro.com/).
-
-## Support
-
-To reach developers, either make an issue here on GitHub, make a thread on the [forum](https://www.libretro.com/forums/), chat on [discord](https://discord.gg/C4amCeV), or visit our IRC channel: #retroarch @ irc.freenode.org. You could create a post in [Reddit](https://www.reddit.com/r/RetroArch/) with *Technical Support* flair.
-
-## Documentation
-
-See our [Documentation Center](https://docs.libretro.com/). On Unix, man-pages are provided.
-More developer-centric stuff is found [here](https://docs.libretro.com/development/libretro-overview/).
-
-## Related projects
-
-   - Cg/HLSL shaders: [common-shaders](https://github.com/libretro/common-shaders)
-   - slang shaders: [slang-shaders](https://github.com/libretro/slang-shaders)
-   - GLSL shaders: [glsl-shaders](https://github.com/libretro/glsl-shaders)
-   - Helper scripts to build libretro implementations: [libretro-super](https://github.com/libretro/libretro-super)
-   - GitHub mirrors of projects, useful for generating diff files: [libretro-mirrors](https://github.com/libretro-mirrors/)
-
-## Philosophy
-
-RetroArch attempts to be small and lean
-while still having all the useful core features expected from an emulator.
-It is designed to be very portable and features a gamepad-centric and touchscreen UI.
-It also has a full-featured command-line interface.
-
-In some areas, RetroArch goes beyond and emphasizes on not-so-common technical features such as multi-pass shader support,
-real-time rewind (Braid-style), video recording (using FFmpeg), run-ahead input latency removal, etc.
-
-RetroArch also emphasizes being easy to integrate into various launcher frontends.
-
-## Platforms
-
-RetroArch has been ported to the following platforms:
-   - Android (2.x to most recent version)
-   - Apple iOS
-   - Apple macOS (PPC, x86-32 and x86-64)
-   - Apple tvOS
-   - Blackberry
-   - DOS
-   - Emscripten (WebAssembly and JavaScript)
-   - FreeBSD
-   - Haiku
-   - LG webOS
-   - Linux
-   - Original Microsoft Xbox
-   - Microsoft Xbox 360 (Libxenon/XeXDK)
-   - Microsoft Xbox One
-   - Microsoft Xbox Series S/X
-   - Miyoo
-   - NetBSD
-   - Nintendo NES/SNES Classic Edition
-   - Nintendo GameCube
-   - Nintendo Wii
-   - Nintendo Switch
-   - Nintendo Wii U
-   - Nintendo 3DS/2DS
-   - OpenBSD
-   - OpenDingux
-   - PlayStation2
-   - PlayStation3
-   - PlayStation4
-   - PlayStation Portable
-   - PlayStation Vita
-   - Raspberry Pi
-   - ReactOS
-   - Redox OS
-   - RetroFW
-   - RS90
-   - SerenityOS
-   - Solaris
-   - Windows NT 3.5
-   - Windows 95
-   - Windows 98
-   - Windows 2000
-   - Windows XP
-   - Windows Millennium
-   - Windows Vista
-   - Windows 7
-   - Windows 8
-   - Windows 10
-   - Windows 11
-
-## Dependencies (PC)
-
-There are no true hard dependencies per se.
-
-On Windows, RetroArch can run with only Win32 as dependency.
-
-On Linux, there are no true dependencies. For optimal usage, the
-following dependencies come as recommended:
-
-   - GL headers / Vulkan headers
-   - X11 headers and libs, or EGL/KMS/GBM
-
-OSX port of RetroArch requires latest versions of Xcode to build.
-
-RetroArch can utilize these libraries if enabled:
-
-   - nvidia-cg-toolkit
-   - libfreetype2 (TTF font rendering on screen)
-
-RetroArch needs at least one of these audio driver libraries:
-
-   - ALSA
-   - OSS
-   - RoarAudio
-   - RSound
-   - OpenAL
-   - JACK
-   - SDL
-   - PulseAudio
-   - PipeWire
-   - XAudio2 (Win32, Xbox 360)
-   - DirectSound (Win32, Xbox 1)
-   - CoreAudio (OSX, iOS)
-
-To run properly, RetroArch requires a libretro implementation present; however, as it's typically loaded
-dynamically, it's not required at build time.
-
-## Dependencies (Console ports, mobile)
-
-Console ports have their own dependencies, but generally do not require
-anything other than what the respective SDKs provide.
-
-## Requirements
-
-### OpenGL1 ###
-Your videocard needs to at least support the OpenGL 1.1 spec.
-
-***Shaders***: N/A
-
-**Menu driver support**: MaterialUI, XMB, Ozone and RGUI should all work correctly.
-XMB won't have shader pipeline effects because of the aforementioned lack of shader
-support.
-
-### OpenGL2 ###
-Your videocard needs to at least support the OpenGL 2.1 spec.
-
-***Shaders:*** You can choose between either NVIDIA Cg shaders (deprecated, requires separate runtime
-to be installed on your system), or GLSL shaders.
-
-***Menu driver support:*** MaterialUI, XMB, Ozone and RGUI should all work correctly.
-
-### OpenGL3 ###
-Your videocard needs to at least support the OpenGL 3.2 core feature spec.
-
-***Shaders:*** You will be able to use modern Slang shaders with this driver.
-
-***Menu driver support:*** MaterialUI, XMB, Ozone and RGUI should all work correctly.
-
-### Direct3D 11 ###
-Your videocard needs to at least support the Direct3D11 11.0 spec. The card
-also needs to support at least the Shader Model 4.0.
-
-***Shaders:*** You will be able to use modern Slang shaders with this driver.
-
-***Menu driver support:*** MaterialUI, XMB, Ozone and RGUI should all work correctly.
-
-### Vulkan ###
-Your videocard needs to at least support the Vulkan 1.0 spec.
-
-***Shaders:*** You will be able to use modern Slang shaders with this driver.
-
-***Menu driver support:*** MaterialUI, XMB, Ozone and RGUI should all work correctly.
-
-## Configuring
-
-The default configuration is defined in `config.def.h`.
-It is not recommended to change this unless you know what you're doing.
-These can later be tweaked by using a config file.
-A sample configuration file is installed to `/etc/retroarch.cfg`. This is the system-wide config file.
-
-RetroArch will on startup create a config file in `$XDG\_CONFIG\_HOME/retroarch/retroarch.cfg` if it does not exist.
-Users only need to configure a certain option if the desired value deviates from the value defined in config.def.h.
-
-To configure joypads, use the built-in menu or manually configure them in `retroarch.cfg`.
-
-## Compiling and installing
-
-Instructions for compiling and installing RetroArch can be found in the [Libretro/RetroArch Documentation Center](https://docs.libretro.com/).
-
-## CRT 15Khz Resolution Switching
-
-CRT SwitchRes will turn on, on the fly. However, you will need to restart RetroArch to disable it. With CRT SwitchRes enable RetroArch will start in 2560 x 480 @ 60.
-
-If you are running Windows, before enabling the CRT SwitchRes options please make sure you have installed CRTEmudriver and installed some modelines. The minimum modelines for all games to switch correctly are:
-
-- 2560 x 192 @ 60.000000
-- 2560 x 200 @ 60.000000
-- 2560 x 240 @ 60.000000
-- 2560 x 224 @ 60.000000
-- 2560 x 237 @ 60.000000
-- 2560 x 256 @ 50.000000
-- 2560 x 254 @ 55.000000
-- 2560 x 448 @ 60.000000
-- 2560 x 480 @ 60.000000
-
-Install these modelines replacing 2560 with your desired super resolution. The above resolutions are NTSC only so if you would be playing any PAL content please add PAL modelines:
-
-- 2560 x 192 @ 50.000000
-- 2560 x 200 @ 50.000000
-- 2560 x 240 @ 50.000000
-- 2560 x 224 @ 50.000000
-- 2560 x 288 @ 50.000000
-- 2560 x 237 @ 50.000000
-- 2560 x 254 @ 55.000000
-- 2560 x 448 @ 50.000000
-- 2560 x 480 @ 50.000000
-
-Some games will require higher PAL resolutions which should also be installed:
-
-- 2560 x 512 @ 50.000000
-- 2560 x 576 @ 50.000000
-
-Ideally install all these modelines and everything will work great.
-
-## Super Resolutions
-
-The default super resolution is 2560. It is displayed just under the CRT switch option, which can be found in video settings. This can be changed within the retroarch.cfg. The only compatible resolutions are 1920, 2560 and 3840. Any other resolutions will be ignored and native switching will be activated.
-
-## Native Resolutions
-
-If native resolutions are activated you will need a whole new set of modelines:
-
-- 256 x 240 @ 50.006977 SNESpal
-- 256 x 448 @ 50.006977 SNESpal
-- 512 x 224 @ 50.006977 SNESpal
-- 512 x 240 @ 50.006977 SNESpal
-- 512 x 448 @ 50.006977 SNESpal
-- 256 x 240 @ 60.098812 SNESntsc
-- 256 x 448 @ 60.098812 SNESntsc
-- 512 x 240 @ 60.098812 SNESntsc
-- 512 x 224 @ 60.098812 SNESntsc
-- 512 x 448 @ 60.098812 SNESntsc
-- 256 x 192 @ 59.922745 MDntsc
-- 256 x 224 @ 59.922745 MDntsc
-- 320 x 224 @ 59.922745 MDntsc
-- 320 x 240 @ 59.922745 MDntsc
-- 320 x 448 @ 59.922745 MDntsc
-- 320 x 480 @ 59.922745 MDntsc
-- 256 x 192 @ 49.701458 MDpal
-- 256 x 224 @ 49.701458 MDpal
-- 320 x 224 @ 49.701458 MDpal
-- 320 x 240 @ 49.701458 MDpal
-- 320 x 288 @ 49.701458 MDpal
-- 320 x 448 @ 49.701458 MDpal
-- 320 x 480 @ 49.701458 MDpal
-- 320 x 576 @ 49.701458 MDpal
-- 256 x 288 @ 49.701458 MSYSpal
-- 256 x 240 @ 60.098812 NESntsc
-- 256 x 240 @ 50.006977 NESpal
-
-- 640 x 237 @ 60.130001 N64ntsc
-- 640 x 240 @ 60.130001 N64ntsc
-- 640 x 480 @ 60.130001 N64ntsc
-- 640 x 288 @ 50.000000 N64pal
-- 640 x 480 @ 50.000000 N64pal
-- 640 x 576 @ 50.000000 N64pal
-
-- 256 x 252 @ 49.759998 PSXpal
-- 320 x 252 @ 49.759998 PSXpal
-- 384 x 252 @ 49.759998 PSXpal
-- 640 x 252 @ 49.759998 PSXpal
-- 640 x 540 @ 49.759998 PSXpal
-
-- 384 x 240 @ 59.941002 PSXntsc
-- 256 x 480 @ 59.941002 PSXntsc
-
-- 352 x 240 @ 59.820000 Saturn/SGFX_NTSCp
-- 704 x 240 @ 59.820000 SaturnNTSCp
-- 352 x 480 @ 59.820000 SaturnNTSCi
-- 704 x 480 @ 59.820000 SaturnNTSCi
-- 352 x 288 @ 49.701458 SaturnPALp
-- 704 x 288 @ 49.701458 SaturnPALp
-- 352 x 576 @ 49.701458 SaturnPALi
-- 704 x 576 @ 49.701458 SaturnPALi
-
-- 240 x 160 @ 59.730000 GBA
-- 320 x 200 @ 60.000000 Doom
-
-// Arcade
-
-- 400 x 254 @ 54.706841 MK
-- 384 x 224 @ 59.637405 CPS1
-
-These modelines are more accurate giving exact hz. However, some games may have unwanted results. This is due to mid-scanline resolution changes on the original hardware. For the best results super resolutions are the way to go.
-
-## CRT resolution switching & MAME
-
-Some arcade resolutions can be very different from consumer CRTs. There is resolution detection to ensure MAME games will be displayed in the closest available resolution but drawn at their native resolution within this resolution. Meaning that the MAME game will look just like the original hardware.
-
-MAME ROMs that run in a vertical aspect like DoDonPachi need to be rotated within MAME before resolution switching and aspect correction will work. Do this before enabling CRT SwitchRes so that RetroArch will run in your desktop resolution. Once you have rotated any games that may need it turn CRT SwitchRes on.
-
-## Socials
-
-The links below belong to our official channels. Links other than this may have been created by fans, independent members or followers. We seriously recommend using our original resources.
-
-- [Website](https://www.retroarch.com/)
-- [Blog](https://libretro.com/)
-- [Facebook](https://www.facebook.com/libretro)
-- [Twitter](https://twitter.com/libretro)
-- [Reddit](https://www.reddit.com/r/RetroArch/)
-- [YouTube](https://www.youtube.com/Libretro)
-- [Google Post](https://posts.google.com/share/55Nhs2jG)
-- [Steam](https://store.steampowered.com/app/1118310/RetroArch/)
-- [YouTube Topic](https://www.youtube.com/channel/UC5q007PYyQPgin0HHbzF0zQ)
-- [Patreon](https://www.patreon.com/libretro)
-- [BOUNTYSOURCE](https://www.bountysource.com/teams/libretro/issues)
-- [Discord](https://discord.com/invite/VZ2b7wghxR)
-- [Teespring](https://teespring.com/stores/retroarch)
-- [Documentation](https://docs.libretro.com/)
-- [Forum](https://forums.libretro.com/)
+# Cartlink
+
+Cartlink is an **unofficial fork of [RetroArch](https://github.com/libretro/RetroArch)**
+v1.22.2 that adds **Load from URL**: paste a link to a game file, Cartlink
+downloads it and loads it the normal way (core choice, zip/7z handling,
+history). Everything else, netplay included, works like RetroArch.
+
+The point: friends who load the same link get the exact same file, so
+normal netplay just works and nobody has to pass files around first.
+
+Cartlink is not made, endorsed or supported by the libretro team. All
+the emulation, menus and netplay are RetroArch's work; please report
+Cartlink problems [here](https://github.com/OWNER/cartlink/issues), not
+to libretro. Licence: GNU GPL v3 or later, the same as RetroArch
+(see [COPYING](COPYING)). The files Cartlink changed are listed in
+[NOTICE-CARTLINK.md](NOTICE-CARTLINK.md).
+
+> **Only load games you own or have the right to use. Cartlink does not
+> provide, link to or help find games.** It contains no games, BIOS files
+> or links to them.
+
+## What Cartlink adds
+
+- **Load Content → Load from URL**: type a link or paste it with
+  **Ctrl+V** / **Shift+Insert**. Share links from Google Drive, Dropbox,
+  OneDrive and archive.org are turned into direct downloads; plain
+  direct links work as they are.
+- **Your own server or NAS**: a login popup for sites that ask for one,
+  saved per site (`https://host:port`). Logins are **only ever sent over
+  https with a valid certificate**, never over plain http.
+- **archive.org sign-in** for items that need an account (uses
+  archive.org's public API; respect their terms).
+- **Game lists**: a link to a folder served as a listing (Caddy's
+  `file_server browse`) opens as a menu of games and subfolders. Folders
+  you open are kept under **Saved Servers**.
+- **Fingerprints**: a link may end with `#sha256=<64 hex digits>`. The
+  file must match it or it is refused.
+- **Safety checks** on every download: programs and scripts are
+  refused ("Blocked: this link gives a program, not a game."), archives
+  are checked before they are unpacked (no unsafe paths, no programs,
+  at most 2 GB unpacked), and every https download checks the site's
+  certificate.
+- **URL cache**: a link downloaded once loads from the cache next time.
+  **Settings → Network → Clear URL Cache** empties it.
+- **Command line**: `cartlink -L <core> https://example.com/game.sfc`.
+- **Netplay**: everyone loads the same link, then hosts / joins as usual.
+- Its own settings folder, so it never changes a RetroArch install's
+  settings (see [Where things are saved](#where-things-are-saved)).
+- A home server kit: [tools/cartlink-server/SETUP.md](tools/cartlink-server/SETUP.md).
+
+## How to use
+
+### Load a game from a link
+1. **Load Content → Load from URL**.
+2. Type the link, or paste it with **Ctrl+V** or **Shift+Insert**.
+   (On Linux, paste needs `wl-paste`, `xclip` or `xsel`; most desktops
+   have one.)
+3. Press Enter. "Downloading ..." shows while it downloads, then a core
+   is picked (or you are asked) just like for a file on disk.
+
+Google Drive links get Google's "can't scan this file for viruses" page
+skipped on purpose (that is how big files download); Cartlink's own
+program and archive checks still run.
+
+### Fingerprints (`#sha256=`)
+Whoever shares a link can add the file's SHA-256 so everyone is sure to
+get exactly that file:
+
+```
+https://example.com/games/mygame.gb#sha256=3f2a...  (64 hex digits)
+```
+
+The part after `#` is never sent to the server. If the downloaded (or
+cached) file has a different SHA-256, it is deleted and refused:
+"Blocked: this file is not the one that was shared (fingerprint
+mismatch)." Make the fingerprint with `sha256sum mygame.gb` (Linux),
+`shasum -a 256` (macOS), `certutil -hashfile mygame.gb SHA256` (Windows),
+or the server kit's `cartlink-link` helper, which prints the whole link.
+
+### Certificates
+Every https download checks the site's security certificate. If it is
+not valid you see "This site's security certificate is not valid.
+Someone may be changing the file on the way." with **Cancel** and
+**Download anyway (unsafe)**. *Download anyway* is offered only for
+downloads without a login, for that one download. A link with a
+fingerprint is downloaded and then must match its fingerprint. The
+command line never offers *Download anyway*.
+
+### Your own server or NAS
+If a site asks for a login, a popup asks for the username and then the
+password. If it works, the login is saved for that site and used next
+time. If the password is wrong, it says so and asks again.
+
+Logins (and archive.org keys) are only sent over https to a site whose
+certificate is valid. A server that asks for a password over plain http
+gets: "This server asks for a password without encryption (http). Use
+its https:// address." A NAS with a self-signed certificate: give it a
+real certificate (for example Caddy's automatic HTTPS), or use links
+without a login.
+
+### Game lists and Saved Servers
+A link that ends in `/` and points at a folder listing opens a game
+list: pick a folder to go deeper, a file to download it. Cartlink reads
+the listing format of Caddy's `file_server browse`. Servers you open are
+kept under **Load Content → Saved Servers** (only the address, never the
+login) and can be removed there.
+
+To share your own games with friends over the internet (one link, a
+login for each friend, a list of all games), see the server kit:
+[tools/cartlink-server/SETUP.md](tools/cartlink-server/SETUP.md).
+Only put files on a server that you have the right to share.
+
+### archive.org account
+**Settings → Network → archive.org Account**, then your email and
+password. Cartlink keeps archive.org's access keys, not your password.
+Anyone with these keys can use your archive.org account, so use
+**Forget Saved Logins** on shared computers.
+
+### Forget saved logins
+**Settings → Network → Forget Saved Logins** removes every saved login
+(sites and archive.org).
+
+### Clear URL Cache
+**Settings → Network → Clear URL Cache** deletes the downloaded games,
+so links download again. Use this if a friend's copy doesn't match yours.
+
+### Command line
+```sh
+cartlink -L <core> https://example.com/path/game.sfc
+```
+It downloads (or uses the cache), then starts the game. The command line
+can't ask for a login: open a login-protected link once from the menu
+(so the login is saved), then the command line can use it. Folder links
+(game lists) open only from the menu.
+
+### Netplay
+Everyone loads the **same link** (with the same fingerprint, if any),
+then uses normal RetroArch netplay (host / join). Because everyone has
+the same bytes, the game check matches.
+
+## Where things are saved
+
+Cartlink has its own settings folder (it keeps RetroArch's file names
+inside, such as `retroarch.cfg`):
+
+| System  | Folder |
+|---------|--------|
+| Linux   | `~/.config/cartlink` (or `$XDG_CONFIG_HOME/cartlink`) |
+| Windows | the folder `cartlink.exe` is in (portable), else `%APPDATA%\Cartlink` |
+| macOS   | `~/Library/Application Support/Cartlink` |
+| Android | not changed yet (an Android build is planned later) |
+
+- **Logins:** `url_logins.cfg` in that folder, kept apart from
+  `retroarch.cfg`. On Linux and macOS it is plain text with owner-only
+  permissions (0600). On Windows every value is protected with DPAPI
+  for your Windows user: if you move a portable folder to another PC
+  or another Windows user, the saved logins can't be read there and
+  must be typed again.
+- **The settings folder holds your passwords: don't share it** (or zip
+  it up for a friend). Cloud Sync never uploads the logins or servers
+  files.
+- **Saved Servers:** `url_servers.cfg` (addresses only).
+- **Downloads:** `url_cache` inside the Downloads folder (Settings →
+  Directory). Delete files there to free space.
+
+**Upgrading from a build that used RetroArch's folder** (for example an
+earlier Cartlink / "Retro Link" test build): on first start, if
+Cartlink's folder has no `url_logins.cfg` / `url_servers.cfg` but the
+RetroArch folder (`~/.config/retroarch` on Linux) has them, they are
+**copied** over once. The RetroArch files are never moved or deleted, and
+`retroarch.cfg` is never imported.
+
+## Build
+
+### Linux
+```sh
+./configure --disable-systemmbedtls --enable-builtinmbedtls --disable-ffmpeg
+make -j"$(nproc)"
+```
+The result is the `cartlink` program in the repo folder.
+
+- `--enable-builtinmbedtls`: Cartlink bundles mbedTLS 2.28.10 (see
+  `deps/mbedtls/CARTLINK-VERSION.txt`); current distros ship mbedTLS
+  4.x, which this code base does not support.
+- `--disable-ffmpeg`: RetroArch 1.22.2's FFmpeg player core does not
+  build with FFmpeg 8.x.
+- `--disable-networking` builds without Load from URL (and without
+  netplay), as in RetroArch.
+
+Typical build packages (Debian/Ubuntu names): `build-essential
+pkg-config libx11-dev libxext-dev libxrandr-dev libgl-dev libegl-dev
+libasound2-dev libpulse-dev libudev-dev libwayland-dev
+wayland-protocols libxkbcommon-dev zlib1g-dev`.
+
+`make install` installs only Cartlink's own files (binary, desktop
+entry `io.github.cartlink.Cartlink`, icon, docs), so it can sit next to
+an installed RetroArch.
+
+### Windows (cross-built on Linux)
+Needs MinGW-w64 (`x86_64-w64-mingw32-gcc`), `rsync` and `zip`.
+```sh
+tools/build_windows.sh            # BUILD_DIR=... OUT_DIR=... to choose folders
+```
+It builds a static 64-bit `cartlink.exe` (Windows 10 or newer) in a
+separate copy of the sources and packs `cartlink-win64.zip` with the
+licence and a short README. No assets, core info files or cores are
+included: on first run use **Main Menu → Online Updater** (Update
+Assets, Update Core Info Files, then Core Downloader for the cores you
+want). Windows SmartScreen may warn about an unknown app: **More info →
+Run anyway**.
+
+### Tests
+```sh
+make -C tests-other/url_content test fetch-test   # unit + local server tests
+make -C tests-other/url_content win-test          # Windows logins under Wine
+tools/url_e2e.sh                                  # end to end (headless)
+tools/url_e2e_catalog.py                          # game list menus (headless gamescope)
+```
+The tests use throwaway folders and local test servers only; they
+never read or write your real settings.
+
+## Limits
+- Files bigger than 2 GiB are refused.
+- Google Drive, Dropbox and OneDrive: public share links only.
+- The password is visible while you type it.
+- On the command line, download progress shows only in the log.
+- On builds with the FFmpeg or mpv player, a link given with no core
+  (`cartlink https://...` without `-L`) is passed to the player as a
+  stream, as RetroArch does.
+
+## Security
+See [SECURITY.md](SECURITY.md) for how to report a security problem.
+
+## Credits
+Cartlink is built on RetroArch by the libretro team and its many
+contributors (see [AUTHORS.h](AUTHORS.h) and RetroArch's history).
+The RetroArch and libretro names belong to their owners; Cartlink uses
+them only to say what it is based on.

@@ -1,26 +1,40 @@
-# Security Policy
+# Security policy (Cartlink)
 
-## Reasonable expectations
+Cartlink is an unofficial fork of RetroArch. This policy covers
+Cartlink's own parts: Load from URL (downloads, logins, game lists,
+fingerprints, certificate checks, the URL cache), the home server kit in
+`tools/cartlink-server/`, and the bundled mbedTLS copy.
 
-RetroArch is a frontend for the libretro API. The main functionality is fulfilled by invoking other binary libraries ("cores") which are not restricted by RetroArch in any way. Cores are able to read/write/delete files, spawn processes, communicate over the network. Also, source for cores is not necessarily in control by libretro team, and core binaries / RetroArch binaries are not signed. For this reason, it is a bad idea to use RetroArch or any other libretro frontend on security critical systems.
+## Reporting a problem
 
-Also, RetroArch and cores have been packaged in several ways. Content on the [official download site](https://buildbot.libretro.com/) is built from a direct mirror of the original RetroArch and core repositories, no binaries are reused. Note that source for the core repositories may be outside libretro team control.
+Please **don't open a public issue** for a security problem. Use GitHub's
+private reporting instead: the repository's **Security** tab →
+**Report a vulnerability**
+(https://github.com/OWNER/cartlink/security/advisories/new).
 
-## Supported Versions
+Include what you found, how to reproduce it, and which version
+(`cartlink --version`). Don't include real passwords, server names or
+copyrighted files. You should get a first answer within 14 days. This is
+a small volunteer project: there is no bug bounty.
 
-For most delivery channels, libretro team does not have control over the version. The exceptions are:
-- [official download site](https://buildbot.libretro.com/)
-- Steam release
-- Apple App Store release
-- various Android app store releases
-- note that Google Play Store version is years behind and can not be updated
+Problems that are also in upstream RetroArch (cores, netplay, the menu,
+other drivers) are best reported to RetroArch as well:
+https://github.com/libretro/RetroArch/security
 
-You may report vulnerability against any recent version, but be reasonable.
+## Supported versions
 
-## Reporting a Vulnerability
+Only the latest Cartlink release gets fixes.
 
-Please report security vulnerabilities at libretro@gmail.com
+## What to expect from Cartlink
 
-## Possible remediation
-
-Due to the variety of delivery channels, RetroArch team can not recall any given version universally. Security fixes are accepted for next release, and notice may be posted in the channels controlled by RetroArch team, depending on the severity assessed by RetroArch team.
+- Cores are normal programs: they can read and write files and use the
+  network. Only use cores you trust. Load from URL never downloads
+  cores, only content files.
+- Downloads: programs and scripts are refused, archives are checked
+  before unpacking, https certificates are checked on every download,
+  and a `#sha256=` fingerprint, when present, must match.
+- Logins are sent only over https with a valid certificate. They are
+  stored in `url_logins.cfg` in Cartlink's settings folder: plain text
+  with mode 0600 on Linux/macOS, DPAPI-protected (current user) on
+  Windows. Anyone who can read your settings folder as you can use them.
+- Binaries are not code-signed.
