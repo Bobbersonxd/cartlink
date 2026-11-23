@@ -20,7 +20,13 @@
 #   An ASan binary (make SANITIZER=address) also has its report checked.
 #   default binary: ./cartlink in the repo; shots are only kept when
 #   a shots dir is given.
-# Needs: gamescope (+ gamescopectl), python3-xlib.
+# Logins are only sent over https with a valid certificate, so the
+# login part runs the whole check inside "unshare -rmn" (no root
+# needed): a private loopback, a private /tmp/.X11-unix, and the test
+# CA bound over the system CA bundle for that namespace only. A second
+# https server with a throwaway self-signed certificate is the one that
+# does not verify. Without unshare the login part is skipped.
+# Needs: gamescope (+ gamescopectl), python3-xlib, openssl.
 
 import glob
 import os
@@ -37,6 +43,32 @@ RA = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else ROOT + "/cartlink"
 SHOTS = os.path.abspath(sys.argv[2]) if len(sys.argv) > 2 else None
 SERVE = ROOT + "/tests-other/url_content/serve.py"
 NICE = ["nice", "-n", "19", "ionice", "-c3"]
+CERTS = ROOT + "/tests-other/url_content/certs"
+SYS_CAS = ("/etc/ssl/certs/ca-certificates.crt",
+           "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem",
+           "/etc/ssl/cert.pem")
+IN_NS = os.environ.get("URL_E2E_CATALOG_NS") == "1"
+
+
+def reexec_in_namespace():
+    """Runs this script again inside unshare -rmn with the test CA as
+    the system CA bundle. Returns its exit code, or None if that is not
+    possible here (the caller then runs without the login part)."""
+    sys_ca = next((f for f in SYS_CAS if os.path.exists(f)), None)
+    subprocess.run(["make", "-s", "-C", os.path.dirname(CERTS),
+                    "certs/ca.pem", "certs/srv.pem", "certs/srv.key"],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if (not sys_ca or not os.path.exists(CERTS + "/ca.pem")
+            or subprocess.run(["unshare", "-rmn", "true"],
+                              stderr=subprocess.DEVNULL).returncode != 0):
+        return None
+    inner = ('ip link set lo up && mount -t tmpfs tmpfs /tmp/.X11-unix '
+             '&& mount --bind "$1" "$2" && shift 2 && exec python3 "$@"')
+    args = ["unshare", "-rmn", "sh", "-c", inner, "sh", CERTS + "/ca.pem",
+            sys_ca, os.path.abspath(__file__), RA] + (
+                [SHOTS] if SHOTS else [])
+    return subprocess.run(args, env=dict(os.environ,
+                          URL_E2E_CATALOG_NS="1")).returncode
 
 
 def free_port():
@@ -59,8 +91,13 @@ def wait_port(port, tries=200):
 
 def main():
     if not os.access(RA, os.X_OK):
-        print("No RetroArch binary at %s" % RA)
+        print("No Cartlink binary at %s" % RA)
         return 1
+    if not IN_NS:
+        rc = reexec_in_namespace()
+        if rc is not None:
+            return rc
+        print("note: no unshare -rmn / system CA bundle: login part skipped")
     work = tempfile.mkdtemp(prefix="url_e2e_catalog.")
     home = work + "/home"
     for d in ("home", "assets", "saves", "system", "cache"):
@@ -105,15 +142,26 @@ cache_directory = "%s/cache"
         if not wait_port(web_port):
             print("FAIL: serve.py did not start")
             return 1
-        certs = ROOT + "/tests-other/url_content/certs"
+        certs = CERTS
         subprocess.run(["make", "-s", "-C", os.path.dirname(certs),
                         "certs/ca.pem", "certs/srv.pem", "certs/srv.key"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # The server whose certificate does not verify: in the namespace
+        # the test CA is trusted, so it gets a throwaway self-signed one.
+        bad_pem, bad_key = certs + "/srv.pem", certs + "/srv.key"
+        if IN_NS:
+            bad_pem, bad_key = work + "/bad.pem", work + "/bad.key"
+            subprocess.run(["openssl", "req", "-x509", "-newkey",
+                            "rsa:2048", "-nodes", "-keyout", bad_key,
+                            "-out", bad_pem, "-days", "2", "-subj",
+                            "/CN=localhost", "-addext",
+                            "subjectAltName=DNS:localhost"],
+                           stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL)
         tls_http_port = free_port()
         tls_port = free_port()
         tls = subprocess.Popen(NICE + ["python3", SERVE, str(tls_http_port),
-                               str(tls_port), certs + "/srv.pem",
-                               certs + "/srv.key"],
+                               str(tls_port), bad_pem, bad_key],
                                stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL)
         procs.append(tls)
@@ -121,6 +169,22 @@ cache_directory = "%s/cache"
             print("FAIL: https serve.py did not start")
             return 1
         tls_base = "https://localhost:%d" % tls_port
+        # The server with a valid certificate (namespace only): logins.
+        ok_base = ok_http = None
+        if IN_NS:
+            ok_http_port = free_port()
+            ok_port = free_port()
+            ok = subprocess.Popen(NICE + ["python3", SERVE,
+                                  str(ok_http_port), str(ok_port),
+                                  certs + "/srv.pem", certs + "/srv.key"],
+                                  stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL)
+            procs.append(ok)
+            if not wait_port(ok_port):
+                print("FAIL: https serve.py (valid certificate) did not start")
+                return 1
+            ok_base = "https://localhost:%d" % ok_port
+            ok_http = "http://127.0.0.1:%d" % ok_http_port
 
         env = dict(os.environ, HOME=home, XDG_CONFIG_HOME=home + "/.config",
                    ASAN_OPTIONS="log_path=%s/asan:exitcode=0" % work)
@@ -221,7 +285,8 @@ cache_directory = "%s/cache"
             return open(p).read() if os.path.exists(p) else None
 
         def authlog():
-            return urllib.request.urlopen(base + "/authlog").read().decode()
+            return urllib.request.urlopen(
+                (ok_http or base) + "/authlog").read().decode()
 
         def cached(name):
             return [f for f in glob.glob(work + "/assets/url_cache/*")
@@ -300,36 +365,41 @@ cache_directory = "%s/cache"
         snap("catalog-9-removed")
         cmd("MENU_A")
 
-        # A list behind a login: typed once, saved, reused deeper.
-        # Saved Servers is gone, the cursor is on the row after Load
-        # from URL.
-        authlog()   # reset
+        # A list behind a login (https, valid certificate): typed once,
+        # saved, reused deeper. Saved Servers is gone, the cursor is on
+        # the row after Load from URL.
         cmd("MENU_UP")
         snap("catalog-10-no-saved-servers")
-        cmd("MENU_B")
-        type_line(base + "/basic/cat/")
-        time.sleep(1.5)
-        snap("catalog-11-login-prompt")
-        type_line("testuser")
-        type_line("pw")
-        time.sleep(1.5)
-        logins = work + "/url_logins.cfg"
-        check(os.path.exists(logins) and "testuser" in open(logins).read(),
-              "login typed for a list saved to url_logins.cfg")
-        snap("catalog-12-login-list")
-        cmd("MENU_B", 3)
-        al = authlog()
-        # A second prompt would block here and the list would not open.
-        check(log().count("Game list with 1 item(s)") >= 2
-              and "Basic" in al,
-              "deeper folder used the saved login, no prompt (auth: %s)"
-              % al)
-        snap("catalog-13-login-deeper")
+        if ok_base:
+            authlog()   # reset
+            cmd("MENU_B")
+            type_line(ok_base + "/basic/cat/")
+            time.sleep(1.5)
+            snap("catalog-11-login-prompt")
+            type_line("testuser")
+            type_line("pw")
+            time.sleep(1.5)
+            logins = work + "/url_logins.cfg"
+            check(os.path.exists(logins)
+                  and "testuser" in open(logins).read(),
+                  "login typed for a list saved to url_logins.cfg")
+            snap("catalog-12-login-list")
+            cmd("MENU_B", 3)
+            al = authlog()
+            # A second prompt would block here and the list would not
+            # open.
+            check(log().count("Game list with 1 item(s)") >= 2
+                  and "Basic" in al,
+                  "deeper folder used the saved login, no prompt (auth: %s)"
+                  % al)
+            snap("catalog-13-login-deeper")
+            # Back to Load Content (the cursor returns to Load from URL).
+            cmd("MENU_A")
+            cmd("MENU_A")
+        else:
+            print("SKIP: login for a list (needs the namespace)")
 
         # A certificate that does not verify, no login: the choice.
-        # Back to Load Content (the cursor returns to Load from URL).
-        cmd("MENU_A")
-        cmd("MENU_A")
         bad = ("This site's security certificate is not valid. "
                "Someone may be changing the file on the way.")
         n_bad = log().count(bad)

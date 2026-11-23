@@ -168,7 +168,7 @@ $(CERTS):
 	@mkdir -p certs
 	@cd certs && \
 	openssl req -x509 -newkey rsa:2048 -nodes -keyout ca.key -out ca.pem -days 3650 \
-	   -subj "/CN=Retro Link Test CA" -addext "basicConstraints=critical,CA:TRUE" \
+	   -subj "/CN=Cartlink Test CA" -addext "basicConstraints=critical,CA:TRUE" \
 	   -addext "keyUsage=critical,keyCertSign,cRLSign" >/dev/null 2>&1 && \
 	openssl req -newkey rsa:2048 -nodes -keyout srv.key -out srv.csr \
 	   -subj "/CN=localhost" >/dev/null 2>&1 && \
