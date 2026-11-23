@@ -29,6 +29,7 @@
 #include "../../frontend/clipboard.h"
 #include <lrc_hash.h>
 #include <encodings/base64.h>
+#include <compat/strl.h>
 
 static int g_checks   = 0;
 static int g_failures = 0;

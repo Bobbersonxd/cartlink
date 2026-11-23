@@ -1851,12 +1851,12 @@ static unsigned menu_displaylist_parse_system_info(file_list_t *list)
          MENU_ENUM_LABEL_SYSTEM_INFO_ENTRY, MENU_SETTINGS_CORE_INFO_NONE,
          0, 0, NULL))
       count++;
-   /* RetroArch Version */
-   _len = strlcpy(entry,
-         msg_hash_to_str(MENU_ENUM_LABEL_VALUE_SYSTEM_INFO_RETROARCH_VERSION),
+   /* Cartlink: "Cartlink <version> (RetroArch <version>)" in place
+    * of "RetroArch Version: <version>". */
+   _len = strlcpy(entry, "Cartlink " CARTLINK_VERSION " (RetroArch ",
          sizeof(entry));
-   _len       += strlcpy(entry + _len, ": ", sizeof(entry) - _len);
-   strlcpy(entry + _len, PACKAGE_VERSION, sizeof(entry) - _len);
+   _len       += strlcpy(entry + _len, PACKAGE_VERSION, sizeof(entry) - _len);
+   strlcpy(entry + _len, ")", sizeof(entry) - _len);
    if (menu_entries_append(list, entry, "",
          MENU_ENUM_LABEL_SYSTEM_INFO_ENTRY, MENU_SETTINGS_CORE_INFO_NONE,
          0, 0, NULL))

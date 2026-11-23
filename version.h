@@ -19,4 +19,10 @@
 
 #include "version.all"
 
+/* Cartlink: its own version. The Makefile defines it from the
+ * CARTLINK_VERSION file; other build systems fall back to "unknown". */
+#ifndef CARTLINK_VERSION
+#define CARTLINK_VERSION "unknown"
+#endif
+
 #endif

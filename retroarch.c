@@ -6457,7 +6457,8 @@ static void retroarch_print_version(void)
          msg_hash_to_str(MSG_LIBRETRO_FRONTEND));
 
    fprintf(stdout, "Unofficial fork of RetroArch, not affiliated with libretro.\n");
-   fprintf(stdout, "Version: %s", PACKAGE_VERSION);
+   fprintf(stdout, "Version: Cartlink %s (RetroArch %s)",
+         CARTLINK_VERSION, PACKAGE_VERSION);
 #ifdef HAVE_GIT_VERSION
    fprintf(stdout, " (Git %s)", retroarch_git_version);
 #endif

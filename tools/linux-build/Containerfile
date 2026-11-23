@@ -1,0 +1,18 @@
+# Copyright (C) 2026 Cartlink contributors. GNU GPL v3 or later (see COPYING).
+# Build environment for the Linux release (tools/build_linux.sh): an
+# older distro, so the program runs on anything with glibc 2.35 or newer
+# (Ubuntu 22.04+, Debian 12+, Fedora 36+ ...).
+ARG BASE=docker.io/library/ubuntu:22.04
+FROM ${BASE}
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      build-essential pkg-config python3 openssl ca-certificates util-linux \
+      zlib1g-dev liblzma-dev \
+      libx11-dev libx11-xcb-dev libxcb1-dev libxext-dev libxrandr-dev \
+      libxinerama-dev libxi-dev libxxf86vm-dev libxss-dev libxkbcommon-dev \
+      libgl-dev libegl-dev libgbm-dev libdrm-dev libvulkan-dev \
+      libwayland-dev wayland-protocols libdecor-0-dev \
+      libasound2-dev libpulse-dev \
+      libudev-dev libsystemd-dev libsdl2-dev \
+      libfreetype-dev libfontconfig-dev \
+ && rm -rf /var/lib/apt/lists/*

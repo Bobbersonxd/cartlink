@@ -232,6 +232,12 @@ ifneq ($(GIT_VERSION),)  # Enable version_git.o?
    OBJ += version_git.o
 endif
 
+# Cartlink: its own version, from the CARTLINK_VERSION file (version.h)
+CARTLINK_VERSION_STR := $(strip $(shell cat CARTLINK_VERSION 2>/dev/null))
+ifneq ($(CARTLINK_VERSION_STR),)
+   DEFINES += -DCARTLINK_VERSION=\"$(CARTLINK_VERSION_STR)\"
+endif
+
 # General object files
 ifeq ($(HAVE_DR_MP3), 1)
    DEFINES += -DHAVE_DR_MP3

@@ -4619,8 +4619,8 @@ void menu_entries_get_core_title(char *s, size_t len)
       (sysinfo && sysinfo->library_version)
       ? sysinfo->library_version
       : "";
-   /* Cartlink: "Cartlink (RetroArch <version>) - <core>". */
-   size_t _len = strlcpy(s, "Cartlink (RetroArch ", len);
+   /* Cartlink: "Cartlink <version> (RetroArch <version>) - <core>". */
+   size_t _len = strlcpy(s, "Cartlink " CARTLINK_VERSION " (RetroArch ", len);
    _len += strlcpy(s + _len, PACKAGE_VERSION, len - _len);
    _len += strlcpy(s + _len, ")", len - _len);
 #if defined(_MSC_VER)

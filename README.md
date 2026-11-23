@@ -244,9 +244,18 @@ Both build only what is committed (`git archive HEAD`) and write
 the binaries: publish it with them (GPLv3 needs the source to go with
 every binary). The version is in `CARTLINK_VERSION`. A tree with
 uncommitted or untracked files is refused; `--dirty` builds it anyway
-for a local test and names the files `-DIRTY`. `build/` and `dist/`
-are git-ignored. The Linux program is linked against the build
-machine's system libraries (listed in its `SOURCE.txt`).
+for a local test and names the files `-DIRTY`. Set `CARTLINK_REPO_URL`
+to the public repo; while it is the `OWNER` placeholder a release
+build is refused (`--allow-placeholder` makes a `-PLACEHOLDER` test
+build). `build/` and `dist/` are git-ignored.
+
+The Linux release is built in an Ubuntu 22.04 container with rootless
+`podman` (`tools/linux-build/Containerfile`), so it runs with glibc
+2.35 or newer; it leaves out the Qt companion UI, sixel, JACK,
+Video4Linux2, SSA and the PipeWire driver (sound goes through the
+PulseAudio driver, which PipeWire systems also serve). `tools/linux-build/smoke_test.sh <image>
+<linux tarball> <source tarball>` checks it on a fresh image (e.g.
+`docker.io/library/debian:12`): `--version` plus the URL tests.
 
 ### Tests
 ```sh

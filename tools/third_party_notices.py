@@ -3,10 +3,12 @@
 # Writes THIRD-PARTY-NOTICES.txt for a finished build: the licence of
 # every bundled third-party component that was compiled into it.
 #
-# Which deps/ components are in the binary is read from the build's
-# object files (obj-*/**/deps/<name>/*.o), so the list follows the
-# configure options. A compiled component missing from COMPONENTS below
-# stops the script: add it (with its licence) before releasing.
+# Which components are in the binary is read from the build's object
+# files (obj-*/**/*.o), so the list follows the configure options.
+# A compiled deps/<name> missing from COMPONENTS stops the script, and
+# so does any other compiled file whose header has a copyright or
+# licence that is not GPL, RetroArch's or Cartlink's and that no
+# OUTSIDE entry covers: add it (with its licence) before releasing.
 #
 # Usage: tools/third_party_notices.py <built source dir> <out file> windows|linux
 
@@ -125,6 +127,85 @@ COMPONENTS = {
 }
 
 
+# Third-party code compiled from outside deps/: source path prefix ->
+# (title, licence text).
+OUTSIDE = [
+    ("libretro-common/formats/libchdr/",
+     ("libchdr, MAME CHD reader by Aaron Giles (BSD-3-Clause)",
+      lambda: distinct_headers_in("libretro-common/formats/libchdr/"))),
+    ("gfx/common/wayland/",
+     ("Wayland protocol code, generated from wayland-protocols (MIT, per protocol)",
+      lambda: distinct_headers_in("gfx/common/wayland/"))),
+    ("cores/libretro-video-processor/video_processor_v4l2",
+     ("Video4Linux2 video processor core by Jared McNeill (BSD-2-Clause)",
+      lambda: licence_header(src("cores/libretro-video-processor/video_processor_v4l2.c")))),
+    ("libretro-common/encodings/encoding_base64",
+     ("Base64 decoder by William Sherif (zlib licence)",
+      lambda: licence_header(src("libretro-common/encodings/encoding_base64.c")))),
+    ("libretro-common/utils/md5",
+     ("MD5 by Alexander Peslyak (public domain)",
+      lambda: licence_header(src("libretro-common/utils/md5.c")))),
+]
+
+# A header naming one of these is GPL code, RetroArch's own, or the
+# libretro-common MIT notice that has its own section below.
+OWN = re.compile(r"GNU General Public License|GNU GPL|\bGPL(v[23])?\b|"
+                 r"RetroArch team|Cartlink contributors", re.I)
+FOREIGN = re.compile(r"copyright|licen[cs]e|public domain", re.I)
+
+
+def objects():
+    """(relative source path without extension, source file or None)."""
+    out = []
+    for obj in glob.glob(src("obj-*/**/*.o"), recursive=True):
+        rel = re.sub(r"^obj-[^/]+/[^/]+/", "", os.path.relpath(obj, SRC))[:-2]
+        found = None
+        for ext in (".c", ".cpp", ".cc", ".m", ".S", ".s"):
+            if os.path.exists(src(rel + ext)):
+                found = src(rel + ext)
+                break
+        out.append((rel, found))
+    return sorted(out)
+
+
+def distinct_headers_in(prefix):
+    seen = []
+    for rel, f in objects():
+        if rel.startswith(prefix) and f:
+            h = licence_header(f)
+            if h not in seen:
+                seen.append(h)
+    return "\n\n-----\n\n".join(seen)
+
+
+def outside_sections():
+    """Sections for third-party code outside deps/; fails on unknown notices."""
+    used, unknown = [], []
+    for rel, f in objects():
+        if rel.startswith("deps/"):
+            continue
+        if f is None:
+            # Generated at build time with no source next to it: Qt moc
+            # output and the Windows resource file.
+            if re.search(r"(^|/)moc_[^/]+$", rel) or rel.startswith("media/"):
+                continue
+            unknown.append(rel + " (no source file found)")
+            continue
+        entry = next((e for pre, e in OUTSIDE if rel.startswith(pre)), None)
+        if entry:
+            if entry not in used:
+                used.append(entry)
+            continue
+        with open(f, encoding="utf-8", errors="replace") as fh:
+            head = fh.read(4000)
+        if FOREIGN.search(head) and not OWN.search(head):
+            unknown.append(rel)
+    if unknown:
+        sys.exit("compiled files with a third-party notice not covered by OUTSIDE "
+                 "(add their licence):\n  " + "\n  ".join(unknown))
+    return [(t, fn()) for t, fn in used]
+
+
 def config_has(name):
     try:
         return re.search(r"^%s = 1$" % name, read(src("config.mk")), re.M) is not None
@@ -143,6 +224,8 @@ if unknown:
 for dep in built:
     title, text = COMPONENTS[dep]
     sections.append((title, text()))
+
+sections += outside_sections()
 
 if glob.glob(src("obj-*/**/libretro-common/**/*.o"), recursive=True):
     sections.append(("libretro-common (The RetroArch team; MIT, per file)",

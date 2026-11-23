@@ -10,21 +10,26 @@
 # file name gets -DIRTY so it can't pass for a release.
 #
 # Version: the CARTLINK_VERSION file. Repo link: CARTLINK_REPO_URL.
+# While that is still the OWNER placeholder a clean release build is
+# refused; --allow-placeholder builds anyway and adds -PLACEHOLDER to
+# the names (a local test build with a dead source link).
 
 CARTLINK_REPO_URL=${CARTLINK_REPO_URL:-https://github.com/OWNER/cartlink}
 
 LOW="nice -n 19"
 command -v ionice >/dev/null 2>&1 && LOW="$LOW ionice -c3"
 
-# release_init <repo root> [--dirty]
-# Sets VERSION, COMMIT, SHORT, DIRTY (0/1), NAME (cartlink-<v>[-DIRTY]).
+# release_init <repo root> [--dirty] [--allow-placeholder]
+# Sets VERSION, COMMIT, SHORT, DIRTY (0/1), NAME
+# (cartlink-<v>[-DIRTY][-PLACEHOLDER]).
 release_init() {
    local root=$1; shift
-   local allow_dirty=0
+   local allow_dirty=0 allow_placeholder=0
    for a in "$@"; do
       case $a in
          --dirty) allow_dirty=1 ;;
-         *) echo "unknown option: $a (only --dirty)" >&2; exit 2 ;;
+         --allow-placeholder) allow_placeholder=1 ;;
+         *) echo "unknown option: $a (--dirty, --allow-placeholder)" >&2; exit 2 ;;
       esac
    done
    VERSION=$(tr -d ' \t\r\n' < "$root/CARTLINK_VERSION")
@@ -47,6 +52,17 @@ release_init() {
    fi
    NAME=cartlink-$VERSION
    [ "$DIRTY" = 1 ] && NAME=$NAME-DIRTY
+   case $CARTLINK_REPO_URL in
+      */OWNER/*)
+         if [ "$allow_placeholder" = 1 ]; then
+            NAME=$NAME-PLACEHOLDER
+            echo "== WARNING: source link is the placeholder $CARTLINK_REPO_URL; names get -PLACEHOLDER (not for release)"
+         elif [ "$DIRTY" = 0 ]; then
+            echo "The source link is still the placeholder $CARTLINK_REPO_URL." >&2
+            echo "Set CARTLINK_REPO_URL to the public repo, or use --allow-placeholder for a local test build." >&2
+            exit 1
+         fi ;;
+   esac
    return 0
 }
 
@@ -77,8 +93,9 @@ release_unpack() {
 }
 
 # release_source_txt <out file> <platform words> <extra paragraph>
+# [<licence file name in the archive>, default COPYING]
 release_source_txt() {
-   local out=$1 platform=$2 extra=$3
+   local out=$1 platform=$2 extra=$3 copying=${4:-COPYING}
    {
       echo "Cartlink $VERSION, $platform"
       echo
@@ -90,7 +107,7 @@ release_source_txt() {
       echo "Built on $(date -u +%Y-%m-%d)"
       echo
       echo "Cartlink is free software under the GNU GPL v3 or later (see"
-      echo "COPYING). The complete source is at"
+      echo "$copying). The complete source is at"
       echo "  $CARTLINK_REPO_URL (commit $COMMIT)"
       echo "and in $NAME-source.tar.gz, published with this download."
       echo "Build it with the steps in that source's README.md."

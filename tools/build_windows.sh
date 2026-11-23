@@ -19,7 +19,7 @@
 # Left out (no MinGW copies of these on the build machine): SDL/SDL2,
 # FreeType (the built-in STB font is used), FFmpeg, Cg, Qt, Discord.
 #
-# Usage: tools/build_windows.sh [--dirty]
+# Usage: tools/build_windows.sh [--dirty] [--allow-placeholder]
 #   BUILD_DIR=<dir>   default: <repo>/build/win64 (git-ignored)
 #   OUT_DIR=<dir>     default: <repo>/dist (git-ignored)
 #   JOBS=<n>          default: nproc
@@ -92,7 +92,8 @@ python3 "$SRC/tools/third_party_notices.py" "$SRC" "$STAGE/THIRD-PARTY-NOTICES.t
 release_source_txt "$BUILD_DIR/SOURCE.txt" "64-bit Windows" \
 "cartlink.exe is statically linked: it contains the MinGW-w64 runtime,
 winpthreads, libgcc and libstdc++ (built with MinGW-w64 GCC
-$($HOST-gcc -dumpversion)); their notices are in THIRD-PARTY-NOTICES.txt."
+$($HOST-gcc -dumpversion)); their notices are in THIRD-PARTY-NOTICES.txt." \
+COPYING.txt
 # Windows line endings for Notepad.
 sed 's/$/\r/' "$BUILD_DIR/SOURCE.txt" > "$STAGE/SOURCE.txt"
 sed 's/$/\r/' > "$STAGE/README-Cartlink.txt" <<EOF
