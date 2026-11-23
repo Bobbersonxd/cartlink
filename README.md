@@ -118,7 +118,17 @@ Anyone with these keys can use your archive.org account, so use
 
 ### Forget saved logins
 **Settings → Network → Forget Saved Logins** removes every saved login
-(sites and archive.org).
+(sites and archive.org) from Cartlink's own folder.
+
+If you upgraded from a build that used RetroArch's folder, your old
+logins were *copied* (never moved) and the old file is still there in
+plain text. Cartlink never deletes RetroArch's files, so delete it
+yourself once Cartlink works:
+- Linux: `~/.config/retroarch/url_logins.cfg` (or
+  `$XDG_CONFIG_HOME/retroarch/url_logins.cfg`)
+- macOS: `~/Library/Application Support/RetroArch/config/url_logins.cfg`
+- Windows: `%APPDATA%\url_logins.cfg`, or `url_logins.cfg` next to the
+  old `retroarch.exe` of a portable test build
 
 ### Clear URL Cache
 **Settings → Network → Clear URL Cache** deletes the downloaded games,
@@ -162,6 +172,20 @@ inside, such as `retroarch.cfg`):
 - **Saved Servers:** `url_servers.cfg` (addresses only).
 - **Downloads:** `url_cache` inside the Downloads folder (Settings →
   Directory). Delete files there to free space.
+
+### Cores and assets
+
+Cartlink's folder starts empty: no cores, menu icons or fonts. Either
+- use **Main Menu → Online Updater**: Update Assets, Update Core Info
+  Files, then Core Downloader for the cores you want; or
+- reuse what an installed RetroArch already has: **Settings → Directory**
+  and point **Cores** (and **Core Info**, **Assets**) at RetroArch's
+  folders, for example `~/.config/retroarch/cores` on Linux, or
+  `/usr/lib/libretro` for distro packages. On Linux, menu assets of a
+  distro RetroArch in `/usr/share/retroarch` are found automatically.
+
+Shared folders are shared both ways (a core Cartlink downloads there is
+then RetroArch's too); RetroArch's settings file is never changed.
 
 **Upgrading from a build that used RetroArch's folder** (for example an
 earlier Cartlink / "Retro Link" test build): on first start, if
