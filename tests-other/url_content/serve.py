@@ -29,6 +29,7 @@ LAST_ACCEPT = ""  # Accept header of the latest GET
 HTTP_PORT = 0     # both set in main(), for the http <-> https redirects
 HTTPS_PORT = 0
 HTTPS_PORT2 = 0   # a second https port (OS-picked), same routes
+TLS11_PORT = 0    # https that offers only TLS 1.1 (0 if OpenSSL can't)
 GBDUMMY = b"GBDUMMY"
 
 
@@ -287,6 +288,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif path == "/toport":
             # https -> the same host on another https port.
             self.redirect("https://localhost:%d/basic/game.sfc" % HTTPS_PORT2)
+        elif path == "/tls11":
+            # To a server that speaks only TLS 1.1 (Cartlink refuses
+            # anything below 1.2); 404 if this OpenSSL can't offer it.
+            if TLS11_PORT:
+                self.redirect("https://localhost:%d/game.sfc" % TLS11_PORT)
+            else:
+                self.send_error(404)
         elif path == "/tohttp":
             # https -> plain http page that asks for a login.
             self.redirect("http://localhost:%d/basic/game.sfc" % HTTP_PORT)
@@ -463,6 +471,22 @@ def main():
         tls2.socket = ctx.wrap_socket(tls2.socket, server_side=True)
         HTTPS_PORT2 = tls2.server_address[1]
         threading.Thread(target=tls2.serve_forever, daemon=True).start()
+        global TLS11_PORT
+        try:
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                old = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                old.minimum_version = ssl.TLSVersion.TLSv1_1
+                old.maximum_version = ssl.TLSVersion.TLSv1_1
+                old.set_ciphers("DEFAULT:@SECLEVEL=0")
+                old.load_cert_chain(sys.argv[3], sys.argv[4])
+            tls3 = Server(("127.0.0.1", 0), Handler)
+            tls3.socket = old.wrap_socket(tls3.socket, server_side=True)
+            TLS11_PORT = tls3.server_address[1]
+            threading.Thread(target=tls3.serve_forever, daemon=True).start()
+        except (ssl.SSLError, ValueError, AttributeError):
+            TLS11_PORT = 0
     Server(("127.0.0.1", port), Handler).serve_forever()
 
 

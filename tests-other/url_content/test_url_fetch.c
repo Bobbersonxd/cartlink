@@ -1206,6 +1206,31 @@ static void test_https_cert(void)
          out, sizeof(out), err, sizeof(err), NULL, true);
    EXPECT(r == URL_FETCH_OK);
 
+   /* No system list, but the bundled cacert.pem: used instead (here
+    * the test CA stands in for Mozilla's list), so the check works. */
+   {
+      char c2[300], o2[512];
+      new_cache(c2, sizeof(c2), "https-cert-bundled");
+      ssl_socket_set_ca_bundle_file(g_ca);
+      r = fetch_s("localhost", "/game.sfc", c2, NULL, NULL,
+            o2, sizeof(o2), err, sizeof(err));
+      EXPECT(r == URL_FETCH_OK);
+      EXPECT(file_is_game(o2));
+      EXPECT(count_marks(c2) == 0);
+      /* A bundled file that is missing or not PEM: nothing to check
+       * against. */
+      ssl_socket_set_ca_bundle_file("/nonexistent/cacert.pem");
+      new_cache(c2, sizeof(c2), "https-cert-bundled2");
+      r = fetch_s("localhost", "/game.sfc", c2, NULL, NULL,
+            o2, sizeof(o2), err, sizeof(err));
+      EXPECT(r == URL_FETCH_CERT_UNCHECKED);
+      ssl_socket_set_ca_bundle_file(g_root); /* a folder */
+      r = fetch_s("localhost", "/game.sfc", c2, NULL, NULL,
+            o2, sizeof(o2), err, sizeof(err));
+      EXPECT(r == URL_FETCH_CERT_UNCHECKED);
+      ssl_socket_set_ca_bundle_file(NULL);
+   }
+
    /* Trusted certificate: no login needed, it just works; the wrong
     * name on it does not. */
    ssl_socket_set_ca_bundle_override(g_ca);
@@ -1257,6 +1282,43 @@ static void test_https_cert(void)
    EXPECT(r == URL_FETCH_FAILED);
    EXPECT(count_files(cache, NULL, 0, NULL) == 0);
    EXPECT(url_logins_forget_all());
+   ssl_socket_set_ca_bundle_override(NULL);
+}
+
+/* TLS below 1.2 is refused on every connection, checked or not
+ * (serve.py's /tls11 leads to a TLS 1.1-only server signed by the test
+ * CA; 404 if its OpenSSL can't offer TLS 1.1). */
+static void test_tls_min_version(void)
+{
+   char cache[300], out[512], err[256];
+   enum url_fetch_result r;
+
+   ssl_socket_set_ca_bundle_override(g_ca);
+   new_cache(cache, sizeof(cache), "tls11");
+   r = fetch_s("localhost", "/tls11", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   if (r == URL_FETCH_FAILED && !strcmp(err, "HTTP error 404."))
+   {
+      printf("  /tls11: skipped, this OpenSSL can't offer TLS 1.1\n");
+      ssl_socket_set_ca_bundle_override(NULL);
+      return;
+   }
+   /* Trusted certificate, but the old version: no file. */
+   EXPECT(r == URL_FETCH_FAILED);
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+   /* Not a certificate problem: no "Download anyway" either, and that
+    * flag does not get it through. */
+   r = fetch_s_any("localhost", "/tls11", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err), NULL, true);
+   EXPECT(r == URL_FETCH_FAILED);
+   r = fetch_s("localhost", "/tls11#sha256=" GAME_FP, cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_FAILED);
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+   /* The same route works over TLS 1.2 (the control). */
+   r = fetch_s("localhost", "/game.sfc", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_OK);
    ssl_socket_set_ca_bundle_override(NULL);
 }
 
@@ -1409,6 +1471,7 @@ static void test_https(void)
     * before the server sees anything. */
    ssl_socket_set_ca_bundle_override(NULL);
    test_https_cert();
+   test_tls_min_version();
    test_https_logins();
 
    auth_log();
@@ -1542,7 +1605,7 @@ static int online_get(const char *u, int *tls_error)
    return status;
 }
 
-static int run_online(void)
+static int run_online(const char *bundled)
 {
    int tls, status;
 
@@ -1589,6 +1652,48 @@ static int run_online(void)
             size, err);
       EXPECT(r == URL_FETCH_OK);
       EXPECT(size == 131072);
+   }
+
+   /* Real sites over TLS 1.1 only: refused (an unreachable site fails
+    * the same way, so this check alone proves little; the local
+    * /tls11 test is the real one). */
+   status = online_get("https://tls-v1-1.badssl.com:1011/", &tls);
+   printf("tls-v1-1.badssl.com:1011: status %d, tls_error %d\n", status, tls);
+   EXPECT(status == -1);
+
+   /* The bundled Mozilla list alone (no system list, as on a fresh
+    * Windows PC whose root store lacks a root): the usual hosts
+    * verify, bad certificates still fail. */
+   if (bundled && *bundled)
+   {
+      static const char *good[] = {
+         "https://valid-isrgrootx1.letsencrypt.org/",
+         "https://archive.org/robots.txt",
+         "https://drive.google.com/robots.txt",
+         "https://www.dropbox.com/robots.txt",
+         "https://github.com/",
+         NULL };
+      int i;
+      ssl_socket_set_ca_bundle_override("/nonexistent/system-ca.pem");
+      ssl_socket_set_ca_bundle_file(bundled);
+      for (i = 0; good[i]; i++)
+      {
+         status = online_get(good[i], &tls);
+         printf("bundled only, %s: status %d, tls_error %d\n", good[i],
+               status, tls);
+         EXPECT(tls == NET_HTTP_TLS_OK);
+         EXPECT(status >= 200 && status < 500);
+      }
+      status = online_get("https://untrusted-root.badssl.com/", &tls);
+      printf("bundled only, untrusted-root.badssl.com: tls_error %d\n", tls);
+      EXPECT(tls == NET_HTTP_TLS_BAD_CERT);
+      /* (A host not used above: the pool keeps checked connections.) */
+      ssl_socket_set_ca_bundle_file("");
+      status = online_get("https://example.com/", &tls);
+      printf("no list at all: tls_error %d\n", tls);
+      EXPECT(tls == NET_HTTP_TLS_NO_CA);
+      ssl_socket_set_ca_bundle_file(NULL);
+      ssl_socket_set_ca_bundle_override(NULL);
    }
 
    if (g_failures)
@@ -1712,7 +1817,7 @@ int main(int argc, char **argv)
 {
    char tmpl[] = "/tmp/url_fetch_test.XXXXXX";
    if (argc >= 2 && !strcmp(argv[1], "online"))
-      return run_online();
+      return run_online(argc >= 3 ? argv[2] : NULL);
    if (argc < 2 || (g_port = atoi(argv[1])) <= 0)
    {
       printf("usage: %s <port> [<https port> <ca.pem>] | online\n",

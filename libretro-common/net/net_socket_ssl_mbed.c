@@ -22,6 +22,9 @@
 /* Modified by Cartlink contributors, 2026. */
 
 #include <string.h>
+#include <stdlib.h>
+#include <file/file_path.h>
+#include <streams/file_stream.h>
 #include <net/net_compat.h>
 #include <net/net_socket.h>
 #include <net/net_socket_ssl.h>
@@ -32,6 +35,7 @@
 #endif
 
 #if defined(HAVE_BUILTINMBEDTLS)
+#include "../../deps/mbedtls/mbedtls/version.h"
 #include "../../deps/mbedtls/mbedtls/config.h"
 #include "../../deps/mbedtls/mbedtls/certs.h"
 #include "../../deps/mbedtls/mbedtls/debug.h"
@@ -87,19 +91,77 @@ struct ssl_state
 };
 
 static char ssl_ca_override[1024] = {0};
+/* The bundled Mozilla CA list: set_ca_bundle_file's path, or (never
+ * set) cacert.pem next to the program. */
+static char ssl_ca_bundled[1024] = {0};
+static bool ssl_ca_bundled_set   = false;
 
-void ssl_socket_set_ca_bundle_override(const char *path)
+static void ssl_copy_path(char *out, size_t len, const char *path)
 {
    size_t i = 0;
    if (path)
-      for (; path[i] && i + 1 < sizeof(ssl_ca_override); i++)
-         ssl_ca_override[i] = path[i];
-   ssl_ca_override[i] = '\0';
+      for (; path[i] && i + 1 < len; i++)
+         out[i] = path[i];
+   out[i] = '\0';
+}
+
+void ssl_socket_set_ca_bundle_override(const char *path)
+{
+   ssl_copy_path(ssl_ca_override, sizeof(ssl_ca_override), path);
+}
+
+void ssl_socket_set_ca_bundle_file(const char *path)
+{
+   ssl_copy_path(ssl_ca_bundled, sizeof(ssl_ca_bundled), path);
+   ssl_ca_bundled_set = path != NULL;
 }
 
 #if defined(MBEDTLS_X509_CRT_PARSE_C)
-/* Appends the system's trusted CA certificates to chain. True if at
- * least one could be loaded. */
+/* Appends the PEM certificates in the file at path (UTF-8, read
+ * through the VFS so Windows paths work). Certificates mbedTLS can't
+ * parse are skipped. */
+static void ssl_parse_pem_file(mbedtls_x509_crt *chain, const char *path)
+{
+   void *buf   = NULL;
+   int64_t len = 0;
+   if (!path || !*path || !path_is_valid(path))
+      return;
+   if (filestream_read_file(path, &buf, &len) && buf && len > 0)
+      /* PEM needs the terminating NUL counted. */
+      mbedtls_x509_crt_parse(chain, (const unsigned char*)buf,
+            (size_t)len + 1);
+   free(buf);
+}
+
+/* Appends the bundled Mozilla CA list (cacert.pem, shipped next to
+ * the program in the release archives). */
+static void ssl_load_bundled_ca(mbedtls_x509_crt *chain)
+{
+   if (ssl_ca_bundled_set)
+   {
+      ssl_parse_pem_file(chain, ssl_ca_bundled);
+      return;
+   }
+#if !defined(RARCH_CONSOLE) && defined(RARCH_INTERNAL)
+   {
+      char dir[1024];
+      char path[1024];
+      dir[0] = '\0';
+      fill_pathname_application_dir(dir, sizeof(dir));
+      if (!dir[0])
+         return;
+      fill_pathname_join_special(path, dir, "cacert.pem", sizeof(path));
+      ssl_parse_pem_file(chain, path);
+   }
+#endif
+}
+
+/* Appends the trusted CA certificates to chain: the system's first,
+ * then the bundled cacert.pem. On Windows (and iOS, which has no
+ * readable system list) the bundled list is always added: the ROOT
+ * store holds only the roots some program has already fetched, so a
+ * fresh PC can lack e.g. Let's Encrypt's. Elsewhere it is used only
+ * when the system has none. True if at least one could be loaded. */
 static bool ssl_load_system_ca(mbedtls_x509_crt *chain)
 {
 #if defined(MBEDTLS_FS_IO) && !defined(SSL_WIN32_CERT_STORE)
@@ -115,14 +177,11 @@ static bool ssl_load_system_ca(mbedtls_x509_crt *chain)
    int i;
 #endif
 
-#if defined(MBEDTLS_FS_IO)
+   /* Tests: this file stands in for the system's list. */
    if (ssl_ca_override[0])
+      ssl_parse_pem_file(chain, ssl_ca_override);
+   else
    {
-      mbedtls_x509_crt_parse_file(chain, ssl_ca_override);
-      return chain->version != 0;
-   }
-#endif
-
 #if defined(SSL_WIN32_CERT_STORE)
    {
       HCERTSTORE store = CertOpenSystemStoreA(0, "ROOT");
@@ -142,9 +201,21 @@ static bool ssl_load_system_ca(mbedtls_x509_crt *chain)
    for (i = 0; bundles[i] && !chain->version; i++)
       mbedtls_x509_crt_parse_file(chain, bundles[i]);
 #if defined(ANDROID) || defined(__ANDROID__)
+   /* Android 14+ updates its CAs here; older versions use /system.
+    * (Untested: no Android build here.) */
+   if (!chain->version)
+      mbedtls_x509_crt_parse_path(chain, "/apex/com.android.conscrypt/cacerts");
    if (!chain->version)
       mbedtls_x509_crt_parse_path(chain, "/system/etc/security/cacerts");
 #endif
+#endif
+   }
+
+#if defined(SSL_WIN32_CERT_STORE) || defined(IOS)
+   ssl_load_bundled_ca(chain);
+#else
+   if (!chain->version)
+      ssl_load_bundled_ca(chain);
 #endif
    return chain->version != 0;
 }
@@ -264,6 +335,13 @@ int ssl_socket_connect(void *state_data,
                MBEDTLS_SSL_TRANSPORT_STREAM,
                MBEDTLS_SSL_PRESET_DEFAULT) != 0)
       return -1;
+   /* Nothing older than TLS 1.2, on every connection. */
+#if defined(MBEDTLS_VERSION_NUMBER) && MBEDTLS_VERSION_NUMBER >= 0x03020000
+   mbedtls_ssl_conf_min_tls_version(&state->conf, MBEDTLS_SSL_VERSION_TLS1_2);
+#else
+   mbedtls_ssl_conf_min_version(&state->conf, MBEDTLS_SSL_MAJOR_VERSION_3,
+         MBEDTLS_SSL_MINOR_VERSION_3);
+#endif
 
 #if defined(MBEDTLS_X509_CRT_PARSE_C)
    if (state->verify)

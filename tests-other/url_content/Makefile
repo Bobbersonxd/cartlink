@@ -248,7 +248,7 @@ win-test:
 	exit $$rc
 
 tls-online-test: $(FETCH_BIN)
-	./$(FETCH_BIN) online
+	./$(FETCH_BIN) online ../../media/cacert.pem
 
 clean:
 	rm -f $(BIN) $(FETCH_BIN) $(AGREE_BIN) $(CHECK_BIN)

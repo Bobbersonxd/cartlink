@@ -55,6 +55,12 @@ int ssl_socket_get_verify_error(void *state_data);
  * instead of the system store. NULL or "" restores the system store. */
 void ssl_socket_set_ca_bundle_override(const char *path);
 
+/* The bundled CA list (Mozilla's cacert.pem) checked after the system
+ * store: on Windows always added to it, elsewhere used when the system
+ * has none. NULL (the default) means cacert.pem next to the program;
+ * "" turns it off. */
+void ssl_socket_set_ca_bundle_file(const char *path);
+
 int ssl_socket_connect(void *state_data, void *data, bool timeout_enable, bool nonblock);
 
 int ssl_socket_send_all_blocking(void *state_data, const void *data_, size_t len, bool no_signal);
