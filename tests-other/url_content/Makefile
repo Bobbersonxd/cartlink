@@ -7,6 +7,10 @@
 #        with openssl into certs/)
 #        make -C tests-other/url_content tls-online-test
 #        (needs internet: certificate checks against real sites)
+#        make -C tests-other/url_content win-test [WIN_TMP=<dir>]
+#        (url_logins on Windows, DPAPI: built with MinGW, run under Wine
+#        in a throwaway prefix under WIN_TMP, default obj-win/; headless,
+#        silent; skipped with a note if MinGW or Wine is missing)
 
 CC      ?= cc
 AR      ?= ar
@@ -99,7 +103,7 @@ FETCH_BIN := test_url_fetch
 # Throwaway test CA and a "localhost" certificate signed by it.
 CERTS := certs/ca.pem certs/srv.pem certs/srv.key
 
-.PHONY: all test fetch-test tls-online-test clean
+.PHONY: all test fetch-test tls-online-test win-test clean
 
 all: $(BIN) $(FETCH_BIN)
 
@@ -185,9 +189,56 @@ fetch-test: $(FETCH_BIN) $(CERTS)
 	done; \
 	./$(FETCH_BIN) $$port $$sport certs/ca.pem
 
+WIN_CC   ?= x86_64-w64-mingw32-gcc
+WIN_TMP  ?= obj-win
+WIN_BIN  := obj-win/test_logins_win.exe
+WIN_SRCS := test_logins_win.c \
+        ../../network/url_logins.c \
+        ../../network/url_content.c \
+        $(LRC)/file/config_file.c \
+        $(LRC)/file/file_path.c \
+        $(LRC)/file/file_path_io.c \
+        $(LRC)/streams/file_stream.c \
+        $(LRC)/vfs/vfs_implementation.c \
+        $(LRC)/string/stdstring.c \
+        $(LRC)/compat/fopen_utf8.c \
+        $(LRC)/compat/compat_posix_string.c \
+        $(LRC)/compat/compat_strl.c \
+        $(LRC)/time/rtime.c \
+        $(LRC)/encodings/encoding_utf.c \
+        $(LRC)/encodings/encoding_base64.c \
+        $(LRC)/encodings/encoding_crc32.c \
+        $(LRC)/formats/json/rjson.c \
+        $(LRC)/streams/interface_stream.c \
+        $(LRC)/streams/memory_stream.c \
+        $(LRC)/hash/lrc_hash.c \
+        $(LRC)/utils/md5.c
+
+$(WIN_BIN): $(WIN_SRCS) ../../network/url_logins.h ../../network/url_content.h
+	@mkdir -p obj-win
+	$(WIN_CC) -std=gnu99 -O1 -g -Wall -Wno-unused-parameter -I$(LRC)/include -DHAVE_NETWORKING \
+	   -o $@ $(WIN_SRCS) -lcrypt32 -static
+
+# Wine runs with its own prefix in WIN_TMP (never ~/.wine), no display,
+# no debug output; the logins file goes to a fresh folder there.
+win-test:
+	@if ! command -v $(WIN_CC) >/dev/null 2>&1; then \
+	   echo "SKIP: win-test ($(WIN_CC) not installed)"; exit 0; fi; \
+	$(MAKE) --no-print-directory $(WIN_BIN) || exit 1; \
+	if ! command -v wine >/dev/null 2>&1; then \
+	   echo "SKIP: win-test run (wine not installed; $(WIN_BIN) built)"; exit 0; fi; \
+	mkdir -p "$(WIN_TMP)/prefix" || exit 1; \
+	data=$$(mktemp -d "$(abspath $(WIN_TMP))/data.XXXXXX") || exit 1; \
+	env -u DISPLAY -u WAYLAND_DISPLAY WINEDEBUG=-all \
+	   WINEPREFIX="$(abspath $(WIN_TMP))/prefix" \
+	   WINEDLLOVERRIDES="mscoree,mshtml=" \
+	   wine ./$(WIN_BIN) "Z:$$data" 2>/dev/null; rc=$$?; \
+	WINEPREFIX="$(abspath $(WIN_TMP))/prefix" wineserver -k >/dev/null 2>&1; \
+	exit $$rc
+
 tls-online-test: $(FETCH_BIN)
 	./$(FETCH_BIN) online
 
 clean:
 	rm -f $(BIN) $(FETCH_BIN) $(AGREE_BIN)
-	rm -rf obj-mbed obj-7z certs
+	rm -rf obj-mbed obj-7z obj-win certs

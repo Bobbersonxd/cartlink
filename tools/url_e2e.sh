@@ -8,8 +8,17 @@
 #   Run 0: a local file through the normal path (regression check)
 #   Run 1: a URL on the command line is downloaded, cached and runs
 #   Run 2: the same URL again is a cache hit (no new request)
-#   Run L: a URL that needs a login exits 1 with a hint
-#   Run S: the same URL with a saved login in url_logins.cfg downloads
+#   Run L: a plain http URL that asks for a login exits 1 with "use
+#          its https:// address" (no prompt, nothing sent)
+#   Run S: the same http URL with a saved login for its https site
+#          (or an old host-only one) still sends nothing, exits 1
+#   Run H: in its own user + network namespace (loopback only, the
+#          throwaway test CA bound over the system CA bundle there, so
+#          nothing outside changes): a login saved per site
+#          (url_login_https://localhost:8443_*) downloads; an old
+#          host-only entry (url_login_localhost_*) works for
+#          https://localhost (port 443) and is moved to the new key; it
+#          is not used for another port (exit 1, login needed)
 #   Run C: a game-list (folder) URL on the command line exits 1 with
 #          "open it from the menu", caches nothing, saves no server
 #   Run B: a program behind a game name (.gb with ELF bytes) exits 1
@@ -242,8 +251,9 @@ else
    fail "run 2: cache (exit $rc, GETs $(gets "$WORK/server.log" /game.nes), see $WORK/run2.log)"
 fi
 
-# ------------------------------------------------- run L: login needed
+# ------------------------------------------------- run L: login over http
 
+LOGIN_HTTP_MSG="This server asks for a password without encryption (http). Use its https:// address."
 AUTH_PORT=$(free_port)
 python3 "$ROOT/tests-other/url_content/serve.py" "$AUTH_PORT" \
    >/dev/null 2>&1 &
@@ -254,22 +264,24 @@ if wait_port "$AUTH_PORT"; then
       "http://127.0.0.1:$AUTH_PORT/basic/game.sfc" --max-frames=60
    rc=$?
    # Exit 1 exactly: a crash (e.g. 139) is a failure too.
-   if [ $rc -eq 1 ] && grep -q \
-         "Login needed for 127.0.0.1: use the menu once to save it" \
-         "$WORK/runL.log.out"; then
-      pass "run L: login needed exits $rc with the hint"
+   if [ $rc -eq 1 ] && grep -qF "$LOGIN_HTTP_MSG" "$WORK/runL.log.out" \
+         && ! grep -q "Login needed" "$WORK/runL.log.out"; then
+      pass "run L: login over http refused (exit $rc), no prompt"
    else
-      fail "run L: login needed (exit $rc, see $WORK/runL.log.out)"
+      fail "run L: login over http (exit $rc, see $WORK/runL.log.out)"
    fi
 else
    fail "run L: serve.py did not start"
 fi
 
-# ------------------------------------------------- run S: saved login
+# ------------------------------------------------- run S: saved login, http
 
 PS=$(make_profile saved)
-# Logins live next to the config file; host 127.0.0.1 -> 127_0_0_1.
+# A login saved for the https site on that host and port (or by an
+# older build for the bare host) is never sent over plain http.
 cat > "$PS/url_logins.cfg" <<EOF
+url_login_https://127.0.0.1:${AUTH_PORT}_user = "bob"
+url_login_https://127.0.0.1:${AUTH_PORT}_pass = "pw"
 url_login_127_0_0_1_user = "bob"
 url_login_127_0_0_1_pass = "pw"
 EOF
@@ -277,15 +289,105 @@ chmod 600 "$PS/url_logins.cfg"
 ra "$PS" "$WORK/runS.log" -L "$CORE" \
    "http://127.0.0.1:$AUTH_PORT/basic/game.sfc" --max-frames=30
 rc=$?
-cached=$(ls "$PS/assets/url_cache/"*_game.sfc 2>/dev/null | head -n 1)
-# The .sfc is not an NES game, so fceumm refusing it afterwards is fine:
-# this run only checks that the saved login downloaded it.
-if [ -n "$cached" ] && [ "$(wc -c < "$cached")" -eq 8192 ] \
-      && grep -q "\[URL\] Downloaded" "$WORK/runS.log" \
-      && ! grep -q "Login needed" "$WORK/runS.log" "$WORK/runS.log.out"; then
-   pass "run S: saved login used, $(basename "$cached") downloaded"
+sfiles=$(find "$PS/assets/url_cache" -type f 2>/dev/null | wc -l)
+if [ $rc -eq 1 ] && grep -qF "$LOGIN_HTTP_MSG" "$WORK/runS.log.out" \
+      && [ "$sfiles" -eq 0 ]; then
+   pass "run S: saved login not sent over http (exit $rc)"
 else
-   fail "run S: saved login (exit $rc, see $WORK/runS.log)"
+   fail "run S: saved login over http (exit $rc, cache files $sfiles, see $WORK/runS.log.out)"
+fi
+
+# ------------------------------------------------- run H: saved login, https
+
+# Inside "unshare -rmn" (no root needed): a private loopback where
+# port 443 may be used, and the test CA bound over the system CA bundle
+# for this namespace only. Two serve.py: https on 443 and on 8443.
+CERTS=$ROOT/tests-other/url_content/certs
+make -s -C "$ROOT/tests-other/url_content" certs/ca.pem certs/srv.pem \
+   certs/srv.key >/dev/null 2>&1
+SYS_CA=""
+for f in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt \
+      /etc/ssl/ca-bundle.pem /etc/ssl/cert.pem; do
+   if [ -e "$f" ]; then SYS_CA=$f; break; fi
+done
+if [ -n "$SYS_CA" ] && [ -f "$CERTS/ca.pem" ] \
+      && unshare -rmn true 2>/dev/null; then
+   PH=$(make_profile https-saved)
+   PO=$(make_profile https-old)
+   PP=$(make_profile https-port)
+   printf '%s\n' 'url_login_https://localhost:8443_user = "bob"' \
+      'url_login_https://localhost:8443_pass = "pw"' > "$PH/url_logins.cfg"
+   printf '%s\n' 'url_login_localhost_user = "bob"' \
+      'url_login_localhost_pass = "pw"' \
+      'url_login_archive_access = "AK"' \
+      'url_login_archive_secret = "SK"' > "$PO/url_logins.cfg"
+   cp "$PO/url_logins.cfg" "$PP/url_logins.cfg"
+   chmod 600 "$PH/url_logins.cfg" "$PO/url_logins.cfg" "$PP/url_logins.cfg"
+   # The inner shell gets everything through the environment.
+   E2E_RA=$RA E2E_CORE=$CORE E2E_CERTS=$CERTS E2E_SYS_CA=$SYS_CA \
+   E2E_SERVE=$ROOT/tests-other/url_content/serve.py E2E_WORK=$WORK \
+   E2E_PH=$PH E2E_PO=$PO E2E_PP=$PP E2E_LIMIT=$LIMIT E2E_NICE=$NICE \
+      unshare -rmn sh -s > "$WORK/runH.inner.log" 2>&1 <<'INNER'
+ip link set lo up || exit 2
+mount --bind "$E2E_CERTS/ca.pem" "$E2E_SYS_CA" || exit 3
+python3 "$E2E_SERVE" 8080 443 "$E2E_CERTS/srv.pem" "$E2E_CERTS/srv.key" \
+   >/dev/null 2>&1 &
+s1=$!
+python3 "$E2E_SERVE" 8081 8443 "$E2E_CERTS/srv.pem" "$E2E_CERTS/srv.key" \
+   >/dev/null 2>&1 &
+s2=$!
+i=0
+until python3 -c 'import socket; [socket.create_connection(("127.0.0.1", p), 1).close() for p in (443, 8443)]' 2>/dev/null; do
+   i=$((i + 1)); [ $i -gt 200 ] && break
+   python3 -c 'import time; time.sleep(0.05)'
+done
+run()
+{
+   prof=$1; log=$2; shift 2
+   HOME=$prof/home XDG_CONFIG_HOME=$prof/home/.config \
+      $E2E_LIMIT $E2E_NICE "$E2E_RA" --config="$prof/retroarch.cfg" \
+      --appendconfig="$prof/append.cfg" --verbose --log-file="$log" "$@" \
+      </dev/null >"$log.out" 2>&1
+   echo "$log: exit $?"
+}
+run "$E2E_PH" "$E2E_WORK/runH.log" -L "$E2E_CORE" \
+   "https://localhost:8443/basic/game.sfc" --max-frames=30
+run "$E2E_PO" "$E2E_WORK/runHO.log" -L "$E2E_CORE" \
+   "https://localhost/basic/game.sfc" --max-frames=30
+run "$E2E_PP" "$E2E_WORK/runHP.log" -L "$E2E_CORE" \
+   "https://localhost:8443/basic/game.sfc" --max-frames=30
+kill $s1 $s2 2>/dev/null
+wait 2>/dev/null
+INNER
+   # The .sfc is not an NES game, so fceumm refusing it afterwards is
+   # fine: only the download counts.
+   cached=$(ls "$PH/assets/url_cache/"*_game.sfc 2>/dev/null | head -n 1)
+   if [ -n "$cached" ] && [ "$(wc -c < "$cached")" -eq 8192 ] \
+         && grep -q "\[URL\] Downloaded" "$WORK/runH.log"; then
+      pass "run H: saved login for https://localhost:8443 used"
+   else
+      fail "run H: saved login over https (see $WORK/runH.log, $WORK/runH.inner.log)"
+   fi
+   cached=$(ls "$PO/assets/url_cache/"*_game.sfc 2>/dev/null | head -n 1)
+   if [ -n "$cached" ] && [ "$(wc -c < "$cached")" -eq 8192 ] \
+         && grep -q '^url_login_https://localhost_user = "bob"' "$PO/url_logins.cfg" \
+         && ! grep -q '^url_login_localhost_' "$PO/url_logins.cfg" \
+         && grep -q '^url_login_archive_access = "AK"' "$PO/url_logins.cfg" \
+         && [ "$(stat -c %a "$PO/url_logins.cfg")" = 600 ]; then
+      pass "run H: old host-only login used for https://localhost and moved to the new key"
+   else
+      fail "run H: old-format login (see $WORK/runHO.log, $PO/url_logins.cfg)"
+   fi
+   pfiles=$(find "$PP/assets/url_cache" -type f 2>/dev/null | wc -l)
+   if grep -q "runHP.log: exit 1" "$WORK/runH.inner.log" \
+         && grep -q "Login needed for localhost" "$WORK/runHP.log.out" \
+         && [ "$pfiles" -eq 0 ]; then
+      pass "run H: old host-only login not used for another port"
+   else
+      fail "run H: old login on another port (cache files $pfiles, see $WORK/runHP.log.out)"
+   fi
+else
+   echo "SKIP: run H (needs unshare -rmn, a system CA bundle and the test certificates)"
 fi
 
 # ------------------------------------------------- run C: game list

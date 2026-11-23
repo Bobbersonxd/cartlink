@@ -41,21 +41,26 @@ enum url_fetch_result
    URL_FETCH_BLOCKED_ARCHIVE, /* archive with a program/unsafe path/bomb, or unreadable */
    URL_FETCH_BLOCKED_TOO_BIG, /* archive unpacks to more than 2 GiB */
    URL_FETCH_BLOCKED_FINGERPRINT, /* #sha256= did not match: nothing kept */
-   URL_FETCH_CERT_INVALID     /* https certificate did not verify (no login
+   URL_FETCH_CERT_INVALID,    /* https certificate did not verify (no login
                                  sent): may be retried with download_anyway */
+   URL_FETCH_LOGIN_HTTP       /* a plain http server answered 401: no login
+                                 is ever sent over http, no prompt */
 };
 
 typedef void (*url_fetch_progress_t)(size_t done, size_t total, void *ud);
 
 /* Blocking. Fixes the link, returns CACHED if a cache file for it
  * exists, else downloads it. Auth: user/pass if user is non-empty,
- * else saved logins for the host, else archive.org keys (https only)
- * for hosts ending in archive.org. Over https the login goes as Basic
- * with the first request (retried once with Digest if the server asks
- * for it); over plain http nothing is sent until the server answers
- * 401, then its challenge (Digest preferred, else Basic) is answered
- * once. Certificates: see url_fetch_to_cache_ex. On NEED_LOGIN, challenge holds the
- * WWW-Authenticate value (may be empty). cb, out buffers and err may
+ * else the saved login for the link's site (url_logins: https only,
+ * scheme://host[:port]), else archive.org keys (https only) for hosts
+ * ending in archive.org. A login goes only to its own https site (same
+ * host and port; an http link the server moves to https on the same
+ * host counts as that https site), only with a verified certificate,
+ * as Basic with the first request (retried once with Digest if the
+ * server asks for it). Over plain http no login is ever sent, Basic or
+ * Digest: a 401 there is LOGIN_HTTP (err says to use https), never
+ * NEED_LOGIN. Certificates: see url_fetch_to_cache_ex. On NEED_LOGIN,
+ * challenge holds the WWW-Authenticate value (may be empty). cb, out buffers and err may
  * be NULL / zero length. cache_dir is created if missing.
  * Every request sends an Accept header that also takes JSON. An
  * application/json answer that is a Caddy folder listing is a game
@@ -89,13 +94,17 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
  *   it is deleted and BLOCKED_FINGERPRINT. Cache hits for such a link
  *   are hashed again every time. A broken #sha256= fails the link
  *   (FAILED). The fragment is never sent and the cache name is that of
- *   the URL without it, so files cached before stay valid. */
+ *   the URL without it, so files cached before stay valid.
+ * login_site_out (may be NULL) gets the https site a login (typed or
+ * saved) was sent to on an OK or CATALOG answer, empty otherwise: the
+ * site to save a typed login under. */
 enum url_fetch_result url_fetch_to_cache_ex(const char *url,
       const char *cache_dir,
       const char *user_or_null, const char *pass_or_null,
       char *out_path, size_t out_len, char *challenge, size_t ch_len,
       char *err, size_t err_len, url_fetch_progress_t cb, void *ud,
-      struct url_catalog *catalog_or_null, bool download_anyway);
+      struct url_catalog *catalog_or_null, bool download_anyway,
+      char *login_site_out, size_t ls_len);
 
 /* Deletes the downloaded files in cache_dir: plain files named
  * <16 hex>_..., nothing else (no sub-folders, no other files). Refuses

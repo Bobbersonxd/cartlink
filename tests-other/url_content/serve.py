@@ -25,6 +25,9 @@ LOGIN_POSTS = 0   # POSTs that reached /xauthn/?op=login
 AUTH_LOG = []     # Authorization scheme of each /basic/ and /digest/ GET
 SLOW = 16 * 1024 * 1024
 LAST_ACCEPT = ""  # Accept header of the latest GET
+HTTP_PORT = 0     # both set in main(), for the http <-> https redirects
+HTTPS_PORT = 0
+HTTPS_PORT2 = 0   # a second https port (OS-picked), same routes
 GBDUMMY = b"GBDUMMY"
 
 
@@ -277,6 +280,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # Only meant for the https side: to a name the test
             # certificate does not cover.
             self.redirect("https://127.0.0.1:%d/game.sfc" % port)
+        elif path == "/tohttps":
+            # http -> https on localhost (the name on the certificate).
+            self.redirect("https://localhost:%d/basic/game.sfc" % HTTPS_PORT)
+        elif path == "/toport":
+            # https -> the same host on another https port.
+            self.redirect("https://localhost:%d/basic/game.sfc" % HTTPS_PORT2)
+        elif path == "/tohttp":
+            # https -> plain http page that asks for a login.
+            self.redirect("http://localhost:%d/basic/game.sfc" % HTTP_PORT)
         elif path == "/samehost":
             self.redirect("/basic/game.sfc")
         elif path == "/loop":
@@ -432,7 +444,11 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 
 def main():
+    global HTTP_PORT, HTTPS_PORT
     port = int(sys.argv[1])
+    HTTP_PORT = port
+    if len(sys.argv) >= 3:
+        HTTPS_PORT = int(sys.argv[2])
     other = Server(("127.0.0.2", port), Handler)
     threading.Thread(target=other.serve_forever, daemon=True).start()
     if len(sys.argv) >= 5:
@@ -441,6 +457,11 @@ def main():
         ctx.load_cert_chain(sys.argv[3], sys.argv[4])
         tls.socket = ctx.wrap_socket(tls.socket, server_side=True)
         threading.Thread(target=tls.serve_forever, daemon=True).start()
+        global HTTPS_PORT2
+        tls2 = Server(("127.0.0.1", 0), Handler)
+        tls2.socket = ctx.wrap_socket(tls2.socket, server_side=True)
+        HTTPS_PORT2 = tls2.server_address[1]
+        threading.Thread(target=tls2.serve_forever, daemon=True).start()
     Server(("127.0.0.1", port), Handler).serve_forever()
 
 

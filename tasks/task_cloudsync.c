@@ -27,6 +27,9 @@
 #include "../configuration.h"
 #include "../file_path_special.h"
 #include "../network/cloud_sync_driver.h"
+#ifdef HAVE_NETWORKING
+#include "../network/url_logins.h"
+#endif
 #include "../paths.h"
 #include "../tasks/tasks_internal.h"
 #include "../verbosity.h"
@@ -273,6 +276,13 @@ static bool task_cloud_sync_should_ignore_file(const char *filename)
 
    if (string_ends_with(filename, "/.DS_Store"))
        return true;
+
+#ifdef HAVE_NETWORKING
+   /* "Load from URL" logins (and their .tmp/.bak) and saved servers
+    * live next to retroarch.cfg: never uploaded. */
+   if (url_logins_is_private_file(filename))
+      return true;
+#endif
 
    return false;
 }

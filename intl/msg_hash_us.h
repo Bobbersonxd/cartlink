@@ -428,6 +428,10 @@ MSG_HASH(
    "This site's security certificate is not valid. Someone may be changing the file on the way."
    )
 MSG_HASH(
+   MSG_URL_LOGIN_HTTP,
+   "This server asks for a password without encryption (http). Use its https:// address."
+   )
+MSG_HASH(
    MSG_URL_DOWNLOAD_ANYWAY,
    "Download anyway (unsafe)"
    )

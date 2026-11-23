@@ -43,6 +43,7 @@ static int g_sport    = 0;      /* https port, 0 = no https tests */
 static const char *g_ca = NULL; /* the test CA that signed localhost */
 static char g_root[256];
 static char g_logins[300];
+static char g_site[64];         /* https://localhost:<https port> */
 
 #define EXPECT(x) do { \
    g_checks++; \
@@ -136,6 +137,20 @@ static int ends_with(const char *s, const char *suffix)
    size_t ls = strlen(s);
    size_t lx = strlen(suffix);
    return ls >= lx && !strcmp(s + ls - lx, suffix);
+}
+
+#define LOGIN_HTTP_MSG "This server asks for a password without encryption (http). Use its https:// address."
+
+/* Writes an old-build logins file (one entry per bare host). */
+static void write_legacy_logins(const char *host_key, const char *user,
+      const char *pass)
+{
+   FILE *f = fopen(g_logins, "wb");
+   if (!f)
+      return;
+   fprintf(f, "url_login_%s_user = \"%s\"\nurl_login_%s_pass = \"%s\"\n",
+         host_key, user, host_key, pass);
+   fclose(f);
 }
 
 static enum url_fetch_result fetch(const char *path, const char *cache,
@@ -321,86 +336,75 @@ static void test_page(void)
    EXPECT(count_files(cache, NULL, 0, NULL) == 0);
 }
 
+/* Plain http: a login (typed or saved, Basic or Digest) is never sent.
+ * A server asking for one gets LOGIN_HTTP, not a login prompt. */
 static void test_basic(void)
 {
-   char cache[300], out[512], ch[256];
+   char cache[300], out[512], ch[256], err[256], u[256];
    enum url_fetch_result r;
    new_cache(cache, sizeof(cache), "basic");
    auth_log();
    r = fetch("/basic/game.sfc", cache, NULL, NULL, out, sizeof(out),
          ch, sizeof(ch));
-   EXPECT(r == URL_FETCH_NEED_LOGIN);
-   EXPECT(strstr(ch, "Basic") != NULL);
+   EXPECT(r == URL_FETCH_LOGIN_HTTP);
+   EXPECT_STR(ch, "");
    EXPECT(count_files(cache, NULL, 0, NULL) == 0);
    EXPECT_STR(auth_log(), "none");
 
-   /* Plain http: the login waits for the server's 401, then answers
-    * it once. */
-   r = fetch("/basic/game.sfc", cache, "bob", "nope", out, sizeof(out),
-         ch, sizeof(ch));
-   EXPECT(r == URL_FETCH_NEED_LOGIN);
-   EXPECT_STR(auth_log(), "none,Basic");
-
-   r = fetch("/basic/game.sfc", cache, "bob", "pw", out, sizeof(out),
-         ch, sizeof(ch));
-   EXPECT(r == URL_FETCH_OK);
-   EXPECT(file_is_game(out));
-   EXPECT_STR(auth_log(), "none,Basic");
+   /* A typed login is refused the same way: the 401's Basic challenge
+    * is not answered. */
+   url(u, sizeof(u), "/basic/game.sfc");
+   r = url_fetch_to_cache(u, cache, "bob", "pw", out, sizeof(out),
+         ch, sizeof(ch), err, sizeof(err), NULL, NULL, NULL);
+   EXPECT(r == URL_FETCH_LOGIN_HTTP);
+   EXPECT_STR(err, LOGIN_HTTP_MSG);
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+   EXPECT_STR(auth_log(), "none");
 }
 
 static void test_saved_login(void)
 {
-   char cache[300], out[512];
+   char cache[300], out[512], site[64];
    enum url_fetch_result r;
    new_cache(cache, sizeof(cache), "saved");
-   EXPECT(url_logins_set("127.0.0.1", "bob", "pw"));
+   auth_log();
+   /* Saved for the https site on the same host and port: not for http. */
+   snprintf(site, sizeof(site), "https://127.0.0.1:%d", g_port);
+   EXPECT(url_logins_set(site, "bob", "pw"));
    r = fetch("/basic/game.sfc", cache, NULL, NULL, out, sizeof(out),
          NULL, 0);
-   EXPECT(r == URL_FETCH_OK);
-   EXPECT(file_is_game(out));
+   EXPECT(r == URL_FETCH_LOGIN_HTTP);
+   EXPECT_STR(auth_log(), "none");
+   EXPECT(url_logins_forget_all());
+
+   /* A login saved by an older build (host only) is no different. */
+   write_legacy_logins("127_0_0_1", "bob", "pw");
+   r = fetch("/basic/game.sfc", cache, NULL, NULL, out, sizeof(out),
+         NULL, 0);
+   EXPECT(r == URL_FETCH_LOGIN_HTTP);
+   r = fetch("/digest/game.sfc", cache, NULL, NULL, out, sizeof(out),
+         NULL, 0);
+   EXPECT(r == URL_FETCH_LOGIN_HTTP);
+   EXPECT_STR(auth_log(), "none,none");
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
    EXPECT(url_logins_forget_all());
 }
 
+/* Digest over plain http leaks a crackable hash: refused too. */
 static void test_digest(void)
 {
    char cache[300], out[512], ch[256];
    enum url_fetch_result r;
    new_cache(cache, sizeof(cache), "digest");
-   r = fetch("/digest/game.sfc", cache, NULL, NULL, out, sizeof(out),
-         ch, sizeof(ch));
-   EXPECT(r == URL_FETCH_NEED_LOGIN);
-   EXPECT(strstr(ch, "Digest") != NULL);
-
-   r = fetch("/digest/game.sfc", cache, "bob", "wrong", out, sizeof(out),
-         ch, sizeof(ch));
-   EXPECT(r == URL_FETCH_NEED_LOGIN);
-   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
-
-   r = fetch("/digest/game.sfc", cache, "bob", "pw", out, sizeof(out),
-         ch, sizeof(ch));
-   EXPECT(r == URL_FETCH_OK);
-   EXPECT(file_is_game(out));
-}
-
-/* Over plain http a Digest server never sees Basic (the password). */
-static void test_digest_no_basic_first(void)
-{
-   char cache[300], out[512];
-   enum url_fetch_result r;
-   new_cache(cache, sizeof(cache), "digest-first");
    auth_log();
-   r = fetch("/digest/game.sfc", cache, "bob", "pw", out, sizeof(out),
-         NULL, 0);
-   EXPECT(r == URL_FETCH_OK);
-   EXPECT_STR(auth_log(), "none,Digest");
-
-   new_cache(cache, sizeof(cache), "digest-first-saved");
-   EXPECT(url_logins_set("127.0.0.1", "bob", "pw"));
    r = fetch("/digest/game.sfc", cache, NULL, NULL, out, sizeof(out),
-         NULL, 0);
-   EXPECT(r == URL_FETCH_OK);
-   EXPECT_STR(auth_log(), "none,Digest");
-   EXPECT(url_logins_forget_all());
+         ch, sizeof(ch));
+   EXPECT(r == URL_FETCH_LOGIN_HTTP);
+   r = fetch("/digest/game.sfc", cache, "bob", "pw", out, sizeof(out),
+         ch, sizeof(ch));
+   EXPECT(r == URL_FETCH_LOGIN_HTTP);
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+   EXPECT_STR(auth_log(), "none,none");
 }
 
 static void test_redirect(void)
@@ -627,11 +631,11 @@ static void test_redirect_auth(void)
    EXPECT(r == URL_FETCH_OK);
    EXPECT(file_is_text(out, "none"));
 
-   /* Same host asking for it: the echo sees the login. */
+   /* Same host asking for it over http: still nothing sent. */
    new_cache(cache, sizeof(cache), "basicecho");
    r = fetch("/basicecho", cache, "bob", "pw", out, sizeof(out), NULL, 0);
-   EXPECT(r == URL_FETCH_OK);
-   EXPECT(file_is_text(out, "auth:Basic Ym9iOnB3"));
+   EXPECT(r == URL_FETCH_LOGIN_HTTP);
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
 
    /* 127.0.0.1 -> 127.0.0.2: no Authorization is sent. */
    new_cache(cache, sizeof(cache), "xhost");
@@ -641,17 +645,16 @@ static void test_redirect_auth(void)
 
    /* Saved logins do not cross hosts either. */
    new_cache(cache, sizeof(cache), "xhost-saved");
-   EXPECT(url_logins_set("127.0.0.1", "bob", "pw"));
+   write_legacy_logins("127_0_0_1", "bob", "pw");
    r = fetch("/xhost", cache, NULL, NULL, out, sizeof(out), NULL, 0);
    EXPECT(r == URL_FETCH_OK);
    EXPECT(file_is_text(out, "none"));
    EXPECT(url_logins_forget_all());
 
-   /* Same-host redirect keeps the login. */
+   /* Same-host redirect to a page that asks: LOGIN_HTTP. */
    new_cache(cache, sizeof(cache), "samehost");
    r = fetch("/samehost", cache, "bob", "pw", out, sizeof(out), NULL, 0);
-   EXPECT(r == URL_FETCH_OK);
-   EXPECT(file_is_game(out));
+   EXPECT(r == URL_FETCH_LOGIN_HTTP);
 }
 
 static void test_redirect_limits(void)
@@ -896,28 +899,19 @@ static void test_fetch_catalog_login(void)
    memset(&cat, 0, sizeof(cat));
    new_cache(cache, sizeof(cache), "cat-login");
 
+   /* Over plain http: refused (the https version is in test_https). */
    url(u, sizeof(u), "/basic/cat/");
    r = fetch_cat(u, cache, NULL, NULL, out, sizeof(out), err, sizeof(err),
          &cat);
-   EXPECT(r == URL_FETCH_NEED_LOGIN);
+   EXPECT(r == URL_FETCH_LOGIN_HTTP);
+   EXPECT(cat.count == 0);
    url_catalog_free(&cat);
-
-   EXPECT(url_logins_set("127.0.0.1", "bob", "pw"));
    memset(&cat, 0, sizeof(cat));
-   r = fetch_cat(u, cache, NULL, NULL, out, sizeof(out), err, sizeof(err),
+   r = fetch_cat(u, cache, "bob", "pw", out, sizeof(out), err, sizeof(err),
          &cat);
-   EXPECT(r == URL_FETCH_CATALOG);
-   EXPECT(cat.count == 2);
-   if (cat.count == 2)
-   {
-      EXPECT_STR(cat.entries[1].name, "x.gb");
-      r = fetch_cat(cat.entries[1].url, cache, NULL, NULL,
-            out, sizeof(out), err, sizeof(err), NULL);
-      EXPECT(r == URL_FETCH_OK);
-      EXPECT(file_is_gbdummy(out));
-   }
+   EXPECT(r == URL_FETCH_LOGIN_HTTP);
+   EXPECT(cat.count == 0);
    url_catalog_free(&cat);
-   EXPECT(url_logins_forget_all());
 }
 
 static void test_fetch_catalog_null_sink(void)
@@ -1069,7 +1063,7 @@ static enum url_fetch_result fetch_s_any(const char *host,
    char u[512];
    snprintf(u, sizeof(u), "https://%s:%d%s", host, g_sport, path);
    return url_fetch_to_cache_ex(u, cache, user, pass, out, out_len,
-         NULL, 0, err, err_len, NULL, NULL, cat, anyway);
+         NULL, 0, err, err_len, NULL, NULL, cat, anyway, NULL, 0);
 }
 
 /* Runs with the system CAs (the test CA untrusted, so localhost's
@@ -1124,7 +1118,7 @@ static void test_https_cert(void)
    EXPECT_STR(err, "This site's security certificate is not valid, so the login was not sent.");
    EXPECT(count_files(cache, NULL, 0, NULL) == 0);
    EXPECT_STR(auth_log(), "empty");
-   EXPECT(url_logins_set("localhost", "bob", "pw"));
+   EXPECT(url_logins_set(g_site, "bob", "pw"));
    r = fetch_s_any("localhost", "/basic/game.sfc", cache, NULL, NULL,
          out, sizeof(out), err, sizeof(err), NULL, true);
    EXPECT(r == URL_FETCH_FAILED);
@@ -1201,7 +1195,7 @@ static void test_https_cert(void)
    /* ... but never for a download that uses a (saved) login, even on
     * the hop that carries none. */
    new_cache(cache, sizeof(cache), "https-cert-hop-login");
-   EXPECT(url_logins_set("localhost", "bob", "pw"));
+   EXPECT(url_logins_set(g_site, "bob", "pw"));
    r = fetch_s("localhost", "/xhost-s", cache, NULL, NULL,
          out, sizeof(out), err, sizeof(err));
    EXPECT(r == URL_FETCH_FAILED);
@@ -1210,6 +1204,143 @@ static void test_https_cert(void)
    EXPECT(r == URL_FETCH_FAILED);
    EXPECT(count_files(cache, NULL, 0, NULL) == 0);
    EXPECT(url_logins_forget_all());
+   ssl_socket_set_ca_bundle_override(NULL);
+}
+
+/* Logins over https with a verified certificate (the test CA trusted):
+ * saved per site (scheme://host[:port]), never to another port; the
+ * origin the login went to comes back for saving. */
+static void test_https_logins(void)
+{
+   char cache[300], out[512], err[256], u[256], origin[128], ch[256];
+   struct url_catalog cat;
+   enum url_fetch_result r;
+
+   ssl_socket_set_ca_bundle_override(g_ca);
+   auth_log();
+
+   /* Typed login: sent, accepted, and the site it belongs to comes
+    * back for saving. */
+   new_cache(cache, sizeof(cache), "hl-typed");
+   snprintf(u, sizeof(u), "%s/basic/game.sfc", g_site);
+   origin[0] = 'x';
+   r = url_fetch_to_cache_ex(u, cache, "bob", "pw", out, sizeof(out),
+         NULL, 0, err, sizeof(err), NULL, NULL, NULL, false,
+         origin, sizeof(origin));
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT_STR(origin, g_site);
+   EXPECT_STR(auth_log(), "Basic");
+   /* No login used: no site. */
+   new_cache(cache, sizeof(cache), "hl-none");
+   snprintf(u, sizeof(u), "%s/game.sfc", g_site);
+   origin[0] = 'x';
+   r = url_fetch_to_cache_ex(u, cache, NULL, NULL, out, sizeof(out),
+         NULL, 0, err, sizeof(err), NULL, NULL, NULL, false,
+         origin, sizeof(origin));
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT_STR(origin, "");
+
+   /* Saved for this exact site: used. */
+   EXPECT(url_logins_set(g_site, "bob", "pw"));
+   new_cache(cache, sizeof(cache), "hl-saved");
+   r = fetch_s("localhost", "/basic/game.sfc", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_game(out));
+   EXPECT_STR(auth_log(), "Basic");
+   /* Digest: Basic first, then the Digest answer, both over https. */
+   new_cache(cache, sizeof(cache), "hl-saved-digest");
+   r = fetch_s("localhost", "/digest/game.sfc", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT_STR(auth_log(), "Basic,Digest");
+   /* A game list behind the login, and a file from it. */
+   memset(&cat, 0, sizeof(cat));
+   new_cache(cache, sizeof(cache), "hl-cat");
+   r = fetch_s_any("localhost", "/basic/cat/", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err), &cat, false);
+   EXPECT(r == URL_FETCH_CATALOG);
+   EXPECT(cat.count == 2);
+   if (cat.count == 2)
+   {
+      EXPECT_STR(cat.entries[1].name, "x.gb");
+      r = url_fetch_to_cache(cat.entries[1].url, cache, NULL, NULL,
+            out, sizeof(out), NULL, 0, err, sizeof(err), NULL, NULL, NULL);
+      EXPECT(r == URL_FETCH_OK);
+      EXPECT(file_is_gbdummy(out));
+   }
+   url_catalog_free(&cat);
+   auth_log();
+   EXPECT(url_logins_forget_all());
+
+   /* Saved for https://localhost (port 443): not this port. */
+   EXPECT(url_logins_set("https://localhost", "bob", "pw"));
+   new_cache(cache, sizeof(cache), "hl-port");
+   snprintf(u, sizeof(u), "%s/basic/game.sfc", g_site);
+   r = url_fetch_to_cache(u, cache, NULL, NULL, out, sizeof(out),
+         ch, sizeof(ch), err, sizeof(err), NULL, NULL, NULL);
+   EXPECT(r == URL_FETCH_NEED_LOGIN);
+   EXPECT(strstr(ch, "Basic") != NULL);
+   EXPECT_STR(auth_log(), "none");
+   EXPECT(url_logins_forget_all());
+
+   /* An old host-only entry means https://localhost (port 443) too. */
+   write_legacy_logins("localhost", "bob", "pw");
+   r = url_fetch_to_cache(u, cache, NULL, NULL, out, sizeof(out),
+         ch, sizeof(ch), err, sizeof(err), NULL, NULL, NULL);
+   EXPECT(r == URL_FETCH_NEED_LOGIN);
+   EXPECT_STR(auth_log(), "none");
+   EXPECT(url_logins_forget_all());
+
+   /* An http link that the server moves to https on the same host: the
+    * login goes to the https site only. */
+   new_cache(cache, sizeof(cache), "hl-upgrade");
+   snprintf(u, sizeof(u), "http://localhost:%d/tohttps", g_port);
+   origin[0] = 'x';
+   r = url_fetch_to_cache_ex(u, cache, "bob", "pw", out, sizeof(out),
+         NULL, 0, err, sizeof(err), NULL, NULL, NULL, false,
+         origin, sizeof(origin));
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_game(out));
+   EXPECT_STR(origin, g_site);
+   EXPECT_STR(auth_log(), "Basic");
+   EXPECT(url_logins_set(g_site, "bob", "pw"));
+   new_cache(cache, sizeof(cache), "hl-upgrade-saved");
+   r = url_fetch_to_cache(u, cache, NULL, NULL, out, sizeof(out),
+         NULL, 0, err, sizeof(err), NULL, NULL, NULL);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT_STR(auth_log(), "Basic");
+   /* ... but not when the http link was on another host. */
+   new_cache(cache, sizeof(cache), "hl-upgrade-xhost");
+   snprintf(u, sizeof(u), "http://127.0.0.1:%d/tohttps", g_port);
+   r = url_fetch_to_cache(u, cache, "bob", "pw", out, sizeof(out),
+         NULL, 0, err, sizeof(err), NULL, NULL, NULL);
+   EXPECT(r == URL_FETCH_NEED_LOGIN);
+   EXPECT_STR(auth_log(), "none");
+   EXPECT(url_logins_forget_all());
+
+   /* Same host, another https port: another site, no login (typed or
+    * saved) goes there. */
+   new_cache(cache, sizeof(cache), "hl-toport");
+   r = fetch_s("localhost", "/toport", cache, "bob", "pw",
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_NEED_LOGIN);
+   EXPECT_STR(auth_log(), "none");
+   EXPECT(url_logins_set(g_site, "bob", "pw"));
+   r = fetch_s("localhost", "/toport", cache, NULL, NULL,
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_NEED_LOGIN);
+   EXPECT_STR(auth_log(), "none");
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+   EXPECT(url_logins_forget_all());
+
+   /* https moved down to plain http that asks: LOGIN_HTTP, nothing sent. */
+   new_cache(cache, sizeof(cache), "hl-down");
+   r = fetch_s("localhost", "/tohttp", cache, "bob", "pw",
+         out, sizeof(out), err, sizeof(err));
+   EXPECT(r == URL_FETCH_LOGIN_HTTP);
+   EXPECT_STR(err, LOGIN_HTTP_MSG);
+   EXPECT_STR(auth_log(), "none");
    ssl_socket_set_ca_bundle_override(NULL);
 }
 
@@ -1225,6 +1356,7 @@ static void test_https(void)
     * before the server sees anything. */
    ssl_socket_set_ca_bundle_override(NULL);
    test_https_cert();
+   test_https_logins();
 
    auth_log();
    new_cache(cache, sizeof(cache), "https-untrusted");
@@ -1236,7 +1368,7 @@ static void test_https(void)
    EXPECT_STR(auth_log(), "empty");
 
    /* Saved login: same. */
-   EXPECT(url_logins_set("localhost", "bob", "pw"));
+   EXPECT(url_logins_set(g_site, "bob", "pw"));
    r = fetch_s("localhost", "/basic/game.sfc", cache, NULL, NULL,
          out, sizeof(out), err, sizeof(err));
    EXPECT(r == URL_FETCH_FAILED);
@@ -1508,6 +1640,7 @@ int main(int argc, char **argv)
    {
       g_sport = atoi(argv[2]);
       g_ca    = argv[3];
+      snprintf(g_site, sizeof(g_site), "https://localhost:%d", g_sport);
    }
    if (!mkdtemp(tmpl))
    {
@@ -1527,7 +1660,6 @@ int main(int argc, char **argv)
    test_basic();
    test_saved_login();
    test_digest();
-   test_digest_no_basic_first();
    test_redirect();
    test_drop();
    test_missing();

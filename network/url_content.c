@@ -280,6 +280,79 @@ void url_content_host(char *out, size_t len, const char *url)
       out[i] = uc_lower(out[i]);
 }
 
+bool url_content_origin(char *out, size_t len, const char *url)
+{
+   const char *scheme;
+   const char *auth;
+   const char *end;
+   const char *p;
+   char host[256];
+   unsigned long port = 0;
+   bool has_port      = false;
+   int n;
+
+   if (!out || !len)
+      return false;
+   out[0] = '\0';
+   if (!url)
+      return false;
+   if (uc_starts_with_ci(url, "https://"))
+      scheme = "https";
+   else if (uc_starts_with_ci(url, "http://"))
+      scheme = "http";
+   else
+      return false;
+
+   url_content_host(host, sizeof(host), url);
+   if (!host[0])
+      return false;
+
+   /* The port: after the host (and after "]" for IPv6). */
+   auth = uc_authority(url);
+   end  = uc_authority_end(auth);
+   for (p = auth; p < end; p++)
+      if (*p == '@')
+         auth = p + 1;
+   p = auth;
+   if (*p == '[')
+   {
+      while (p < end && *p != ']')
+         p++;
+      if (p < end)
+         p++;
+   }
+   else
+      while (p < end && *p != ':')
+         p++;
+   if (p < end)
+   {
+      if (*p != ':')
+         return false;
+      for (p++; p < end; p++)
+      {
+         if (*p < '0' || *p > '9')
+            return false;
+         port     = port * 10 + (unsigned long)(*p - '0');
+         has_port = true;
+         if (port > 65535)
+            return false;
+      }
+   }
+   if (has_port && port == (scheme[4] == 's' ? 443UL : 80UL))
+      has_port = false;
+
+   if (has_port)
+      n = snprintf(out, len, "%s://%s:%lu", scheme, host, port);
+   else
+      n = snprintf(out, len, "%s://%s", scheme, host);
+   if (n < 0 || (size_t)n >= len)
+   {
+      out[0] = '\0';
+      return false;
+   }
+   return true;
+}
+
 bool url_content_is_downloadable(const char *path)
 {
    static const char *media_exts[] = {

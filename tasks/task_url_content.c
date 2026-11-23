@@ -89,6 +89,7 @@ typedef struct url_task_data
    bool anyway;               /* "Download anyway (unsafe)" was chosen */
    char url[URL_TASK_URL_MAX];
    char host[URL_TASK_HOST_MAX];
+   char login_site[URL_TASK_HOST_MAX + 16]; /* https site a login went to */
    char cache_dir[PATH_MAX_LENGTH];
    char user[URL_TASK_CRED_MAX];
    char pass[URL_TASK_CRED_MAX];
@@ -174,7 +175,8 @@ static void url_task_fetch(url_task_data_t *d)
          d->out_path, sizeof(d->out_path),
          d->challenge, sizeof(d->challenge),
          d->err, sizeof(d->err),
-         url_task_progress_cb, d, &d->catalog, d->anyway);
+         url_task_progress_cb, d, &d->catalog, d->anyway,
+         d->login_site, sizeof(d->login_site));
 #ifdef HAVE_THREADS
    slock_lock(d->lock);
 #endif
@@ -324,6 +326,10 @@ static void url_task_handler(retro_task_t *task)
       case URL_FETCH_CERT_INVALID: /* the callback offers the choice */
          url_task_finish_msg(task,
                msg_hash_to_str(MSG_URL_CERT_INVALID), false);
+         break;
+      case URL_FETCH_LOGIN_HTTP: /* never a login prompt over http */
+         url_task_finish_msg(task,
+               msg_hash_to_str(MSG_URL_LOGIN_HTTP), true);
          break;
       case URL_FETCH_TOO_BIG:
       case URL_FETCH_FAILED:
@@ -549,6 +555,25 @@ static void url_task_open_catalog(url_task_data_t *d)
 }
 #endif
 
+/* After a login worked: a typed one is saved for the https site it
+ * went to (verified certificate, never plain http); a saved one from
+ * an older build is moved to that site's key. Nothing if no login was
+ * sent (login_site empty). */
+static void url_task_keep_login(url_task_data_t *d)
+{
+   if (string_is_empty(d->login_site))
+      return;
+   if (d->has_login)
+   {
+      if (!url_logins_set(d->login_site, d->user, d->pass))
+         RARCH_WARN("[URL] Could not save the login for %s.\n",
+               d->login_site);
+   }
+   else if (!url_logins_migrate(d->login_site))
+      RARCH_WARN("[URL] Could not update the saved login for %s.\n",
+            d->login_site);
+}
+
 static void url_task_callback(retro_task_t *task,
       void *task_data, void *user_data, const char *error)
 {
@@ -563,8 +588,7 @@ static void url_task_callback(retro_task_t *task,
       case URL_FETCH_OK:
       case URL_FETCH_CACHED:
          /* Saved (or replaced) only once the login has worked. */
-         if (d->has_login && !url_logins_set(d->host, d->user, d->pass))
-            RARCH_WARN("[URL] Could not save the login for %s.\n", d->host);
+         url_task_keep_login(d);
          RARCH_LOG("[URL] %s \"%s\".\n",
                d->result == URL_FETCH_CACHED ? "Cache hit" : "Downloaded",
                d->out_path);
@@ -572,8 +596,7 @@ static void url_task_callback(retro_task_t *task,
          break;
       case URL_FETCH_CATALOG:
          /* A login typed for a list is kept exactly as for a file. */
-         if (d->has_login && !url_logins_set(d->host, d->user, d->pass))
-            RARCH_WARN("[URL] Could not save the login for %s.\n", d->host);
+         url_task_keep_login(d);
 #ifdef HAVE_MENU
          url_task_open_catalog(d);
 #else
@@ -810,6 +833,7 @@ bool task_url_content_fetch_cli(const char *url,
 {
    char fixed[URL_TASK_URL_MAX];
    char host[URL_TASK_HOST_MAX];
+   char site[URL_TASK_HOST_MAX + 16];
    char cache_dir[PATH_MAX_LENGTH];
    char err[512];
    char msg[1024];
@@ -838,9 +862,15 @@ bool task_url_content_fetch_cli(const char *url,
    /* Only the host is logged: a link may carry a token or a login. */
    RARCH_LOG("[URL] Fetching from %s into \"%s\".\n", host, cache_dir);
    err[0] = '\0';
-   res    = url_fetch_to_cache(url, cache_dir, NULL, NULL,
+   site[0] = '\0';
+   res    = url_fetch_to_cache_ex(url, cache_dir, NULL, NULL,
          out_path, len, NULL, 0, err, sizeof(err),
-         url_cli_progress_cb, &last_pct, NULL);
+         url_cli_progress_cb, &last_pct, NULL, false, site, sizeof(site));
+   /* A saved login from an older build that just worked: moved to its
+    * site's key. */
+   if (     (res == URL_FETCH_OK || res == URL_FETCH_CATALOG)
+         && site[0] && !url_logins_migrate(site))
+      RARCH_WARN("[URL] Could not update the saved login for %s.\n", site);
 
    switch (res)
    {
@@ -866,6 +896,9 @@ bool task_url_content_fetch_cli(const char *url,
          break;
       case URL_FETCH_CERT_INVALID: /* no "Download anyway" here */
          url_cli_error(msg_hash_to_str(MSG_URL_CERT_INVALID));
+         break;
+      case URL_FETCH_LOGIN_HTTP:
+         url_cli_error(msg_hash_to_str(MSG_URL_LOGIN_HTTP));
          break;
       case URL_FETCH_CATALOG: /* game lists need the menu */
          url_cli_error(msg_hash_to_str(MSG_URL_CATALOG_CLI));

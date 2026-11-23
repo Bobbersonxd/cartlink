@@ -2361,13 +2361,10 @@ ifeq ($(HAVE_NETWORKING), 1)
    endif
 
    ifneq ($(findstring Win32,$(OS)),)
-      LIBS += -lws2_32 -liphlpapi
-      ifeq ($(HAVE_SSL), 1)
-         ifneq ($(HAVE_BUILTINBEARSSL), 1)
-            # Opt-in certificate checks read the Windows root store.
-            LIBS += -lcrypt32
-         endif
-      endif
+      # crypt32: saved "Load from URL" logins are sealed with DPAPI
+      # (network/url_logins.c), and the certificate checks read the
+      # Windows root store.
+      LIBS += -lws2_32 -liphlpapi -lcrypt32
    endif
 
    # Netplay

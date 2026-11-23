@@ -468,7 +468,7 @@ static void test_logins(void)
 
    /* Missing file: every get is false, nothing crashes. */
    EXPECT(!file_exists(path));
-   EXPECT(!url_logins_get("example.com", user, sizeof(user),
+   EXPECT(!url_logins_get("https://example.com", user, sizeof(user),
          pass, sizeof(pass)));
    EXPECT(!url_logins_get_archive_keys(access, sizeof(access),
          secret, sizeof(secret)));
@@ -476,8 +476,8 @@ static void test_logins(void)
    EXPECT(!file_exists(path));
 
    /* Round trip, two hosts. */
-   EXPECT(url_logins_set("example.com", "alice", "s3cret pass"));
-   EXPECT(url_logins_set("files.my-nas.local", "bob", "hunter2"));
+   EXPECT(url_logins_set("https://example.com", "alice", "s3cret pass"));
+   EXPECT(url_logins_set("https://files.my-nas.local:8443", "bob", "hunter2"));
    EXPECT(file_exists(path));
 #ifndef _WIN32
    /* Windows has no POSIX file modes; url_logins skips them there. */
@@ -485,45 +485,68 @@ static void test_logins(void)
 #endif
 
    user[0] = pass[0] = '\0';
-   EXPECT(url_logins_get("example.com", user, sizeof(user),
+   EXPECT(url_logins_get("https://example.com", user, sizeof(user),
          pass, sizeof(pass)));
    EXPECT_STR(user, "alice");
    EXPECT_STR(pass, "s3cret pass");
-   EXPECT(url_logins_get("files.my-nas.local", user, sizeof(user),
+   EXPECT(url_logins_get("https://files.my-nas.local:8443", user, sizeof(user),
          pass, sizeof(pass)));
    EXPECT_STR(user, "bob");
    EXPECT_STR(pass, "hunter2");
 
-   /* Key format: dots become '_'. */
+   /* Key format: the origin, scheme://host[:port], default port left
+    * out, any URL of the site finds it. */
    if ((f = fopen(path, "r")))
    {
       while (fgets(line, sizeof(line), f))
-         if (strncmp(line, "url_login_example_com_user", 26) == 0)
+         if (strncmp(line, "url_login_https://example.com_user ", 35) == 0)
             saw_host_key = true;
       fclose(f);
    }
    EXPECT(saw_host_key);
+   EXPECT(url_logins_get("HTTPS://Example.com:443/some/game.sfc?x=1",
+         user, sizeof(user), pass, sizeof(pass)));
+   EXPECT_STR(user, "alice");
+   EXPECT(url_logins_get("https://files.my-nas.local:8443/a/",
+         user, sizeof(user), pass, sizeof(pass)));
+   /* Another port, plain http or a bare host: not that site. */
+   EXPECT(!url_logins_get("https://example.com:8443", user, sizeof(user),
+         pass, sizeof(pass)));
+   EXPECT(!url_logins_get("https://files.my-nas.local", user, sizeof(user),
+         pass, sizeof(pass)));
+   EXPECT(!url_logins_get("http://example.com", user, sizeof(user),
+         pass, sizeof(pass)));
+   EXPECT(!url_logins_get("example.com", user, sizeof(user),
+         pass, sizeof(pass)));
+   /* A login is never kept for plain http (it is never sent there). */
+   EXPECT(!url_logins_set("http://example.com", "x", "y"));
+   EXPECT(!url_logins_set("example.com", "x", "y"));
+   EXPECT(!url_logins_set("ftp://example.com", "x", "y"));
+   /* A host the file format could not hold as a key. */
+   EXPECT(!url_logins_set("https://ex\"ample.com", "x", "y"));
+   EXPECT(!url_logins_set("https://ex ample.com", "x", "y"));
+   EXPECT(!url_logins_set("https://ex=ample.com", "x", "y"));
 
    /* Second set replaces the first; other host untouched. */
-   EXPECT(url_logins_set("example.com", "carol", "new"));
-   EXPECT(url_logins_get("example.com", user, sizeof(user),
+   EXPECT(url_logins_set("https://example.com", "carol", "new"));
+   EXPECT(url_logins_get("https://example.com", user, sizeof(user),
          pass, sizeof(pass)));
    EXPECT_STR(user, "carol");
    EXPECT_STR(pass, "new");
-   EXPECT(url_logins_get("files.my-nas.local", user, sizeof(user),
+   EXPECT(url_logins_get("https://files.my-nas.local:8443", user, sizeof(user),
          pass, sizeof(pass)));
    EXPECT_STR(user, "bob");
 
    /* Unknown host. */
-   EXPECT(!url_logins_get("unknown.org", user, sizeof(user),
+   EXPECT(!url_logins_get("https://unknown.org", user, sizeof(user),
          pass, sizeof(pass)));
 
    /* Values the file format cannot hold are refused. */
-   EXPECT(!url_logins_set("example.com", "x", "has\"quote"));
-   EXPECT(!url_logins_set("example.com", "x", "line\nbreak"));
+   EXPECT(!url_logins_set("https://example.com", "x", "has\"quote"));
+   EXPECT(!url_logins_set("https://example.com", "x", "line\nbreak"));
    EXPECT(!url_logins_set(NULL, "x", "y"));
    EXPECT(!url_logins_set("", "x", "y"));
-   EXPECT(url_logins_get("example.com", user, sizeof(user),
+   EXPECT(url_logins_get("https://example.com", user, sizeof(user),
          pass, sizeof(pass)));
    EXPECT_STR(pass, "new");
 
@@ -534,7 +557,7 @@ static void test_logins(void)
          secret, sizeof(secret)));
    EXPECT_STR(access, "AKEY123");
    EXPECT_STR(secret, "SKEY456");
-   EXPECT(url_logins_get("example.com", user, sizeof(user),
+   EXPECT(url_logins_get("https://example.com", user, sizeof(user),
          pass, sizeof(pass)));
    EXPECT_STR(user, "carol");
 #ifndef _WIN32
@@ -553,9 +576,9 @@ static void test_logins(void)
          fputs("stale junk\n", f);
          fclose(f);
       }
-      EXPECT(url_logins_set("example.com", "dave", "pw2"));
+      EXPECT(url_logins_set("https://example.com", "dave", "pw2"));
       EXPECT(!file_exists(tmp));
-      EXPECT(url_logins_get("example.com", user, sizeof(user),
+      EXPECT(url_logins_get("https://example.com", user, sizeof(user),
             pass, sizeof(pass)));
       EXPECT_STR(user, "dave");
 #ifndef _WIN32
@@ -568,32 +591,32 @@ static void test_logins(void)
          EXPECT(mkdir(tmp, 0700) == 0);
          if ((f = fopen(inner, "wb")))
             fclose(f);
-         EXPECT(!url_logins_set("example.com", "eve", "pw3"));
+         EXPECT(!url_logins_set("https://example.com", "eve", "pw3"));
          remove(inner);
       }
-      EXPECT(url_logins_get("example.com", user, sizeof(user),
+      EXPECT(url_logins_get("https://example.com", user, sizeof(user),
             pass, sizeof(pass)));
       EXPECT_STR(user, "dave");
       EXPECT_STR(pass, "pw2");
       rmdir(tmp);
 #endif
-      EXPECT(url_logins_set("example.com", "carol", "new"));
+      EXPECT(url_logins_set("https://example.com", "carol", "new"));
    }
 
    /* Forget all: file gone, every get false. */
    EXPECT(url_logins_forget_all());
    EXPECT(!file_exists(path));
-   EXPECT(!url_logins_get("example.com", user, sizeof(user),
+   EXPECT(!url_logins_get("https://example.com", user, sizeof(user),
          pass, sizeof(pass)));
-   EXPECT(!url_logins_get("files.my-nas.local", user, sizeof(user),
+   EXPECT(!url_logins_get("https://files.my-nas.local:8443", user, sizeof(user),
          pass, sizeof(pass)));
    EXPECT(!url_logins_get_archive_keys(access, sizeof(access),
          secret, sizeof(secret)));
 
    /* No path set: everything fails safely. */
    url_logins_set_path(NULL);
-   EXPECT(!url_logins_set("example.com", "a", "b"));
-   EXPECT(!url_logins_get("example.com", user, sizeof(user),
+   EXPECT(!url_logins_set("https://example.com", "a", "b"));
+   EXPECT(!url_logins_get("https://example.com", user, sizeof(user),
          pass, sizeof(pass)));
 
    remove(path);
@@ -1245,28 +1268,28 @@ static void test_logins_windows_replace(void)
    snprintf(path, sizeof(path), "%s/url_logins.cfg", dir);
    url_logins_set_path(path);
    rename_seam_reset(true, 0);
-   EXPECT(url_logins_set("a.example", "alice", "pw1"));
-   EXPECT(url_logins_set("b.example", "bob", "pw2"));
-   EXPECT(url_logins_get("a.example", user, sizeof(user), pass, sizeof(pass)));
-   EXPECT(url_logins_get("b.example", user, sizeof(user), pass, sizeof(pass)));
+   EXPECT(url_logins_set("https://a.example", "alice", "pw1"));
+   EXPECT(url_logins_set("https://b.example", "bob", "pw2"));
+   EXPECT(url_logins_get("https://a.example", user, sizeof(user), pass, sizeof(pass)));
+   EXPECT(url_logins_get("https://b.example", user, sizeof(user), pass, sizeof(pass)));
    EXPECT_STR(user, "bob");
 
    /* Second rename held: the old file is put back. */
    rename_seam_reset(true, 1u << 2);
-   EXPECT(!url_logins_set("c.example", "carol", "pw3"));
-   EXPECT(url_logins_get("b.example", user, sizeof(user), pass, sizeof(pass)));
-   EXPECT(!url_logins_get("c.example", user, sizeof(user), pass, sizeof(pass)));
+   EXPECT(!url_logins_set("https://c.example", "carol", "pw3"));
+   EXPECT(url_logins_get("https://b.example", user, sizeof(user), pass, sizeof(pass)));
+   EXPECT(!url_logins_get("https://c.example", user, sizeof(user), pass, sizeof(pass)));
    snprintf(side, sizeof(side), "%s.tmp", path);
    EXPECT(!file_exists(side));
 
    /* Putting it back fails too: no login is lost. */
    rename_seam_reset(true, (1u << 2) | (1u << 3));
-   EXPECT(!url_logins_set("c.example", "carol", "pw3"));
+   EXPECT(!url_logins_set("https://c.example", "carol", "pw3"));
    EXPECT(!file_exists(path));
    rename_seam_reset(false, 0);
-   EXPECT(url_logins_get("a.example", user, sizeof(user), pass, sizeof(pass)));
+   EXPECT(url_logins_get("https://a.example", user, sizeof(user), pass, sizeof(pass)));
    EXPECT_STR(pass, "pw1");
-   EXPECT(url_logins_get("c.example", user, sizeof(user), pass, sizeof(pass)));
+   EXPECT(url_logins_get("https://c.example", user, sizeof(user), pass, sizeof(pass)));
    EXPECT_STR(user, "carol");
    EXPECT(file_exists(path));
 #ifdef __linux__
@@ -1886,6 +1909,149 @@ static void test_safety_archive_other(void)
    EXPECT(url_safety_check_archive(NULL) == URL_SAFE_UNREADABLE);
 }
 
+static void test_origin(void)
+{
+   char out[300];
+   EXPECT(url_content_origin(out, sizeof(out), "https://Example.COM/a/b"));
+   EXPECT_STR(out, "https://example.com");
+   EXPECT(url_content_origin(out, sizeof(out), "HTTPS://example.com:443"));
+   EXPECT_STR(out, "https://example.com");
+   EXPECT(url_content_origin(out, sizeof(out), "http://example.com:80/x"));
+   EXPECT_STR(out, "http://example.com");
+   EXPECT(url_content_origin(out, sizeof(out), "http://example.com:443/x"));
+   EXPECT_STR(out, "http://example.com:443");
+   EXPECT(url_content_origin(out, sizeof(out), "https://example.com:8443?x=1"));
+   EXPECT_STR(out, "https://example.com:8443");
+   EXPECT(url_content_origin(out, sizeof(out), "https://example.com:08443/"));
+   EXPECT_STR(out, "https://example.com:8443");
+   EXPECT(url_content_origin(out, sizeof(out), "https://example.com:/x"));
+   EXPECT_STR(out, "https://example.com");
+   EXPECT(url_content_origin(out, sizeof(out), "https://u:p@nas.local:8443/x#y"));
+   EXPECT_STR(out, "https://nas.local:8443");
+   EXPECT(url_content_origin(out, sizeof(out), "https://[::1]:8443/x"));
+   EXPECT_STR(out, "https://[::1]:8443");
+   EXPECT(url_content_origin(out, sizeof(out), "https://[::1]/x"));
+   EXPECT_STR(out, "https://[::1]");
+   /* Not an http(s) site, or no host, or a broken port. */
+   EXPECT(!url_content_origin(out, sizeof(out), "ftp://example.com/"));
+   EXPECT_STR(out, "");
+   EXPECT(!url_content_origin(out, sizeof(out), "example.com"));
+   EXPECT(!url_content_origin(out, sizeof(out), "https:///x"));
+   EXPECT(!url_content_origin(out, sizeof(out), "https://example.com:80a/"));
+   EXPECT(!url_content_origin(out, sizeof(out), "https://example.com:99999/"));
+   EXPECT(!url_content_origin(out, sizeof(out), NULL));
+   EXPECT(!url_content_origin(out, 10, "https://example.com"));
+}
+
+/* Logins saved by older builds: one entry per bare host
+ * (url_login_<host with . : [ as _>_user/_pass). They count as the
+ * https site on the default port only, and are moved to the new key
+ * when that site's login is saved again (or migrated after use). */
+static void test_logins_legacy(void)
+{
+   char dir[]   = "/tmp/url_logins_legacy_XXXXXX";
+   char path[512];
+   char user[128];
+   char pass[128];
+   char access[128];
+   char secret[128];
+   char text[2048];
+   size_t n;
+   FILE *f;
+
+   if (!mkdtemp(dir))
+   {
+      EXPECT(!"mkdtemp");
+      return;
+   }
+   snprintf(path, sizeof(path), "%s/url_logins.cfg", dir);
+   if ((f = fopen(path, "wb")))
+   {
+      fputs("url_login_example_com_user = \"alice\"\n"
+            "url_login_example_com_pass = \"pw1\"\n"
+            "url_login_nas_local_user = \"bob\"\n"
+            "url_login_nas_local_pass = \"pw2\"\n"
+            "url_login_127_0_0_1_user = \"carol\"\n"
+            "url_login_127_0_0_1_pass = \"pw3\"\n"
+            "url_login_archive_access = \"AK\"\n"
+            "url_login_archive_secret = \"SK\"\n", f);
+      fclose(f);
+   }
+   url_logins_set_path(path);
+
+   EXPECT(url_logins_get("https://example.com/x.sfc", user, sizeof(user),
+         pass, sizeof(pass)));
+   EXPECT_STR(user, "alice");
+   EXPECT_STR(pass, "pw1");
+   EXPECT(url_logins_get("https://127.0.0.1", user, sizeof(user),
+         pass, sizeof(pass)));
+   EXPECT_STR(user, "carol");
+   /* Not for another port or for plain http. */
+   EXPECT(!url_logins_get("https://example.com:8443", user, sizeof(user),
+         pass, sizeof(pass)));
+   EXPECT(!url_logins_get("http://example.com", user, sizeof(user),
+         pass, sizeof(pass)));
+   EXPECT(!url_logins_get("https://127.0.0.1:8443", user, sizeof(user),
+         pass, sizeof(pass)));
+
+   /* Saving that site again: the new key replaces the old one. */
+   EXPECT(url_logins_set("https://example.com", "alice", "new"));
+   EXPECT(url_logins_get("https://example.com", user, sizeof(user),
+         pass, sizeof(pass)));
+   EXPECT_STR(pass, "new");
+   /* Migrating a site whose old login worked. */
+   EXPECT(url_logins_migrate("https://nas.local"));
+   EXPECT(url_logins_get("https://nas.local", user, sizeof(user),
+         pass, sizeof(pass)));
+   EXPECT_STR(user, "bob");
+   EXPECT_STR(pass, "pw2");
+   /* Nothing to migrate: fine, nothing changes. */
+   EXPECT(url_logins_migrate("https://unknown.example"));
+   EXPECT(!url_logins_migrate("http://nas.local"));
+
+   text[0] = '\0';
+   if ((f = fopen(path, "rb")))
+   {
+      n = fread(text, 1, sizeof(text) - 1, f);
+      text[n] = '\0';
+      fclose(f);
+   }
+   EXPECT(strstr(text, "url_login_example_com_") == NULL);
+   EXPECT(strstr(text, "url_login_nas_local_") == NULL);
+   EXPECT(strstr(text, "url_login_https://example.com_pass") != NULL);
+   EXPECT(strstr(text, "url_login_https://nas.local_user") != NULL);
+   /* Other old entries and the archive.org keys are left as they are. */
+   EXPECT(strstr(text, "url_login_127_0_0_1_user") != NULL);
+   EXPECT(url_logins_get("https://127.0.0.1", user, sizeof(user),
+         pass, sizeof(pass)));
+   EXPECT_STR(user, "carol");
+   EXPECT(url_logins_get_archive_keys(access, sizeof(access),
+         secret, sizeof(secret)));
+   EXPECT_STR(access, "AK");
+   EXPECT_STR(secret, "SK");
+
+   EXPECT(url_logins_forget_all());
+   url_logins_set_path(NULL);
+   rmdir(dir);
+}
+
+/* Cloud Sync never uploads the logins (and their side files) or the
+ * saved servers. */
+static void test_logins_private_files(void)
+{
+   EXPECT(url_logins_is_private_file("config/url_logins.cfg"));
+   EXPECT(url_logins_is_private_file("config/url_logins.cfg.tmp"));
+   EXPECT(url_logins_is_private_file("config/url_logins.cfg.bak"));
+   EXPECT(url_logins_is_private_file("config/url_servers.cfg"));
+   EXPECT(url_logins_is_private_file("config/sub/URL_Logins.cfg"));
+   EXPECT(url_logins_is_private_file("url_logins.cfg"));
+   EXPECT(!url_logins_is_private_file("config/retroarch-core-options.cfg"));
+   EXPECT(!url_logins_is_private_file("config/my_url_logins.cfg"));
+   EXPECT(!url_logins_is_private_file("saves/url_logins.cfg.srm"));
+   EXPECT(!url_logins_is_private_file(""));
+   EXPECT(!url_logins_is_private_file(NULL));
+}
+
 static void test_safety_zone_text(void)
 {
    char t[512];
@@ -1908,6 +2074,7 @@ int main(int argc, char **argv)
    test_cache_name();
    test_disposition();
    test_host();
+   test_origin();
    test_wipe();
    test_basic_auth();
    test_digest_auth();
@@ -1941,6 +2108,8 @@ int main(int argc, char **argv)
    test_servers_add_top_no_write();
    test_servers_windows_replace();
    test_logins_windows_replace();
+   test_logins_legacy();
+   test_logins_private_files();
    test_safety_blocks_programs();
    test_safety_allows_games();
    test_safety_zone_text();

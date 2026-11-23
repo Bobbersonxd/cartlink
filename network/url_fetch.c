@@ -58,9 +58,11 @@ enum uf_auth
 {
    UF_AUTH_NONE = 0,
    UF_AUTH_BASIC,       /* https: Basic sent with the first request */
-   UF_AUTH_ON_CHALLENGE,/* http: login held back until a 401 asks */
    UF_AUTH_LOW
 };
+
+#define UF_SITE_LEN     300
+#define UF_MSG_LOGIN_HTTP "This server asks for a password without encryption (http). Use its https:// address."
 
 /* Where a 2xx body goes while it arrives: straight into the .part
  * file, except a JSON answer (a game list is parsed from memory),
@@ -458,27 +460,27 @@ static void uf_scan_cache(const char *cache_dir, const char *prefix,
    retro_closedir(dir);
 }
 
-/* Picks the Authorization header for one hop. Logins (explicit or
- * saved) go only to the original host: over https as Basic right
- * away, over plain http only once the server's 401 asks (and then as
- * Digest if it offers it). archive keys go only to archive.org hosts
- * over https. Nothing once an https hop led to plain http. */
+/* Picks the Authorization header for one hop. A login (typed or
+ * saved) goes only to its own site (scheme, host and port), only over
+ * https, as Basic right away (and as Digest if the 401 asks for it);
+ * never over plain http. archive.org keys go only to archive.org hosts
+ * over https. Nothing once an https hop led to plain http. Every
+ * request that carries either is certificate-checked (uf_get). */
 static enum uf_auth uf_pick_auth(char *auth, size_t auth_len,
-      const char *hop_url, const char *hop_host, const char *orig_host,
-      bool downgraded, bool have_login, const char *user, const char *pass)
+      const char *hop_url, const char *hop_host, const char *hop_site,
+      const char *login_site, bool downgraded, bool have_login,
+      const char *user, const char *pass)
 {
    bool https = string_starts_with_case_insensitive(hop_url, "https://");
    auth[0] = '\0';
-   if (downgraded)
+   if (downgraded || !https)
       return UF_AUTH_NONE;
-   if (have_login && string_is_equal(hop_host, orig_host))
+   if (have_login && login_site[0] && string_is_equal(hop_site, login_site))
    {
-      if (!https)
-         return UF_AUTH_ON_CHALLENGE;
       url_content_basic_auth_header(auth, auth_len, user, pass);
       return UF_AUTH_BASIC;
    }
-   if (https && uf_host_is_archive(hop_host))
+   if (uf_host_is_archive(hop_host))
    {
       char access[256];
       char secret[256];
@@ -567,7 +569,7 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
 {
    return url_fetch_to_cache_ex(url, cache_dir, user_or_null, pass_or_null,
          out_path, out_len, challenge, ch_len, err, err_len, cb, ud,
-         catalog_or_null, false);
+         catalog_or_null, false, NULL, 0);
 }
 
 enum url_fetch_result url_fetch_to_cache_ex(const char *url,
@@ -575,9 +577,13 @@ enum url_fetch_result url_fetch_to_cache_ex(const char *url,
       const char *user_or_null, const char *pass_or_null,
       char *out_path, size_t out_len, char *challenge, size_t ch_len,
       char *err, size_t err_len, url_fetch_progress_t cb, void *ud,
-      struct url_catalog *catalog_or_null, bool download_anyway)
+      struct url_catalog *catalog_or_null, bool download_anyway,
+      char *login_site_out, size_t ls_len)
 {
    char link[UF_URL_LEN];
+   char site[UF_SITE_LEN];        /* scheme://host[:port] of the link */
+   char hop_site[UF_SITE_LEN];
+   char login_site[UF_SITE_LEN];  /* the https site a login may go to */
    char fixed[UF_URL_LEN];
    char cur[UF_URL_LEN];
    char next[UF_URL_LEN];
@@ -602,6 +608,9 @@ enum url_fetch_result url_fetch_to_cache_ex(const char *url,
    bool has_fp               = false;
    bool skip_verify          = false;
    bool tls_auth             = false; /* the refused request had a login */
+   bool typed_login          = false;
+   bool login_sent           = false;
+   bool crossed              = false; /* a hop left the link's host */
    uint8_t fp[32];
    unsigned hops             = 0;
 
@@ -615,6 +624,9 @@ enum url_fetch_result url_fetch_to_cache_ex(const char *url,
       challenge[0] = '\0';
    if (err && err_len)
       err[0] = '\0';
+   if (login_site_out && ls_len)
+      login_site_out[0] = '\0';
+   login_site[0] = '\0';
    /* Always safe to url_catalog_free afterwards. */
    if (catalog_or_null)
       memset(catalog_or_null, 0, sizeof(*catalog_or_null));
@@ -640,6 +652,12 @@ enum url_fetch_result url_fetch_to_cache_ex(const char *url,
    }
    url_content_fix_link(fixed, sizeof(fixed), link);
    url_content_host(host, sizeof(host), fixed);
+   url_content_origin(site, sizeof(site), fixed);
+   /* Logins only ever go to an https site: the link's own, or (below)
+    * the https site the server moves an http link to on the same
+    * host. */
+   if (string_starts_with_case_insensitive(site, "https://"))
+      strlcpy(login_site, site, sizeof(login_site));
 
    /* The hash part of the cache name is the same for any file name. */
    url_content_cache_name(prefix, sizeof(prefix), fixed, "x");
@@ -710,10 +728,11 @@ enum url_fetch_result url_fetch_to_cache_ex(const char *url,
       strlcpy(user, user_or_null, sizeof(user));
       if (pass_or_null)
          strlcpy(pass, pass_or_null, sizeof(pass));
-      have_login = true;
+      have_login  = true;
+      typed_login = true;
    }
-   else
-      have_login = url_logins_get(host, user, sizeof(user),
+   else if (login_site[0])
+      have_login = url_logins_get(login_site, user, sizeof(user),
             pass, sizeof(pass));
 
    /* A fingerprint protects the file, so its certificate need not.
@@ -731,11 +750,30 @@ enum url_fetch_result url_fetch_to_cache_ex(const char *url,
       const char *loc;
 
       url_content_host(hop_host, sizeof(hop_host), cur);
-      kind = uf_pick_auth(auth, sizeof(auth), cur, hop_host, host,
-            downgraded, have_login, user, pass);
+      url_content_origin(hop_site, sizeof(hop_site), cur);
+      if (!string_is_equal(hop_host, host))
+         crossed = true;
+      /* http link, moved to https on the same host (and nowhere else
+       * before): that https site is the one a login belongs to. */
+      if (     !login_site[0] && !crossed && !downgraded
+            && string_starts_with_case_insensitive(hop_site, "https://"))
+      {
+         strlcpy(login_site, hop_site, sizeof(login_site));
+         if (!typed_login)
+         {
+            have_login = url_logins_get(login_site, user, sizeof(user),
+                  pass, sizeof(pass));
+            if (have_login)
+               skip_verify = has_fp;
+         }
+      }
+      kind = uf_pick_auth(auth, sizeof(auth), cur, hop_host, hop_site,
+            login_site, downgraded, have_login, user, pass);
 
       uf_response_free(r);
       tls_auth = auth[0] != '\0';
+      if (kind == UF_AUTH_BASIC)
+         login_sent = true;
       if (!uf_get(cur, auth, true, skip_verify, part_path, r, cb, ud))
       {
          uf_set_err(err, err_len, "Bad URL.");
@@ -744,25 +782,14 @@ enum url_fetch_result url_fetch_to_cache_ex(const char *url,
       if (r->tls_error)
          break;
 
-      /* Answer the server's challenge with the login: Digest when
-       * offered (the password itself is never sent), else Basic, which
-       * over plain http is only sent once the server asked for it. */
-      if (     r->status == 401
-            && (kind == UF_AUTH_BASIC || kind == UF_AUTH_ON_CHALLENGE))
+      /* Basic was refused over https: answer a Digest challenge once
+       * (also over the checked connection). */
+      if (r->status == 401 && kind == UF_AUTH_BASIC)
       {
          const char *digest = uf_challenge(r->headers, "Digest");
-         bool retry         = false;
          uf_request_uri(uri, sizeof(uri), cur);
          if (digest && url_content_digest_auth_header(auth, sizeof(auth),
                   digest, "GET", uri, user, pass))
-            retry = true;
-         else if (kind == UF_AUTH_ON_CHALLENGE
-               && uf_challenge(r->headers, "Basic"))
-         {
-            url_content_basic_auth_header(auth, sizeof(auth), user, pass);
-            retry = true;
-         }
-         if (retry)
          {
             uf_response_free(r);
             tls_auth = true;
@@ -810,6 +837,16 @@ enum url_fetch_result url_fetch_to_cache_ex(const char *url,
       uf_set_err(err, err_len, r->tls_error == NET_HTTP_TLS_NO_CA
             ? "Can't check this site's security certificate, so the login was not sent."
             : "This site's security certificate is not valid, so the login was not sent.");
+      goto end;
+   }
+
+   /* A password over plain http could be read (Basic) or cracked
+    * (Digest) on the way: never sent, and no login prompt. */
+   if (     r->status == 401
+         && !string_starts_with_case_insensitive(cur, "https://"))
+   {
+      uf_set_err(err, err_len, UF_MSG_LOGIN_HTTP);
+      ret = URL_FETCH_LOGIN_HTTP;
       goto end;
    }
 
@@ -883,6 +920,8 @@ enum url_fetch_result url_fetch_to_cache_ex(const char *url,
       if (url_catalog_parse((const char*)r->sink.mem, r->sink.mem_len,
                cur, &tmp))
       {
+         if (login_sent && login_site_out && ls_len)
+            strlcpy(login_site_out, login_site, ls_len);
          if (catalog_or_null)
             *catalog_or_null = tmp;
          else
@@ -952,6 +991,8 @@ enum url_fetch_result url_fetch_to_cache_ex(const char *url,
    url_safety_mark_downloaded(final_path, fixed);
    if (out_path && out_len)
       strlcpy(out_path, final_path, out_len);
+   if (login_sent && login_site_out && ls_len)
+      strlcpy(login_site_out, login_site, ls_len);
    ret = URL_FETCH_OK;
 
 end:

@@ -85,6 +85,13 @@ bool url_content_resolve(char *out, size_t len, const char *base,
 /* Lower-case host of a URL, without userinfo or port. */
 void url_content_host(char *out, size_t len, const char *url);
 
+/* The site of an http(s) URL as "scheme://host[:port]": scheme and host
+ * lower-case, no userinfo, the port left out when it is the default
+ * (80 for http, 443 for https), leading zeros dropped. Saved logins are
+ * kept per site. False (out empty) for another scheme, no host, a
+ * broken port or if it does not fit. */
+bool url_content_origin(char *out, size_t len, const char *url);
+
 /* Writes "Authorization: Basic <base64(user:pass)>\r\n". */
 void url_content_basic_auth_header(char *out, size_t len,
       const char *user, const char *pass);
