@@ -80,8 +80,10 @@ def main():
     w("")
     w("## Removed upstream files (%d)" % len(rem))
     w("")
-    w("RetroArch's CI workflows, issue templates, funding file and libretro")
-    w("desktop/metainfo files were removed or replaced, because Cartlink is a")
+    w("RetroArch's CI workflows, issue templates, funding file, libretro")
+    w("desktop/metainfo files and libretro's store listings and packaging")
+    w("metadata (fastlane, Google Play texts, App Store upload settings,")
+    w("Debian packaging) were removed or replaced, because Cartlink is a")
     w("separate project.")
     w("")
     for p in rem:
