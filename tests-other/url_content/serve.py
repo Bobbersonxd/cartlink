@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Cartlink contributors. GNU GPL v3 or later (see COPYING).
 # Local test server for test_url_fetch.c. Silent, loopback only:
 # listens on 127.0.0.1 and 127.0.0.2 (a "different host" for the
 # cross-host redirect test). With a second port and a certificate, the

@@ -16,6 +16,7 @@
  *  You should have received a copy of the GNU General Public License along with RetroArch.
  *  If not, see <http://www.gnu.org/licenses/>.
  */
+/* Modified by Cartlink contributors, 2026. */
 
 #include <ctype.h>
 
@@ -3487,7 +3488,21 @@ void config_load(void *data)
 
       if (!string_is_empty(cfg_path))
       {
+         char legacy_dir[PATH_MAX_LENGTH];
          fill_pathname_basedir(cfg_dir, cfg_path, sizeof(cfg_dir));
+         /* Upgrading from a build that shared RetroArch's folder: copy
+          * (never move) the saved logins and servers once. Before
+          * url_logins_set_path, so Windows seals a plain copy. */
+         if (url_logins_legacy_dir(legacy_dir, sizeof(legacy_dir)))
+         {
+            int n = url_logins_import_legacy(cfg_dir, legacy_dir);
+            if (n > 0)
+               RARCH_LOG("[URL] Copied %d saved login/server file(s) from \"%s\".\n",
+                     n, legacy_dir);
+            else if (n < 0)
+               RARCH_WARN("[URL] Could not copy saved logins/servers from \"%s\".\n",
+                     legacy_dir);
+         }
          fill_pathname_join_special(logins_path, cfg_dir,
                "url_logins.cfg", sizeof(logins_path));
          url_logins_set_path(logins_path);
@@ -3669,14 +3684,8 @@ config_file_t *open_default_config_file(void)
       conf = config_file_new_from_path_to_string(conf_path);
    }
 
-   /* Fallback to $HOME/.retroarch.cfg. */
-   if (!conf && getenv("HOME"))
-   {
-      fill_pathname_join_special(conf_path, getenv("HOME"),
-            "." FILE_PATH_MAIN_CONFIG, sizeof(conf_path));
-      RARCH_LOG("[Config] Looking for config in: \"%s\".\n", conf_path);
-      conf = config_file_new_from_path_to_string(conf_path);
-   }
+   /* Cartlink: no fallback to $HOME/.retroarch.cfg (that file belongs
+    * to a RetroArch install; Cartlink keeps its own folder). */
 
    if (!conf && has_application_data)
    {

@@ -1,4 +1,5 @@
 #!/bin/sh
+# Copyright (C) 2026 Cartlink contributors. GNU GPL v3 or later (see COPYING).
 # End-to-end check for "Load from URL" (command line side).
 #
 # Everything is headless and silent (null video/audio/input drivers),
@@ -6,6 +7,10 @@
 # so the user's own RetroArch setup is never read or written.
 #
 #   Run 0: a local file through the normal path (regression check)
+#   Run I: first start with no --config: url_logins.cfg / url_servers.cfg
+#          are copied once from the RetroArch folder into Cartlink's own
+#          folder (0600, marker); retroarch.cfg is not imported
+#          and the RetroArch folder is not changed
 #   Run 1: a URL on the command line is downloaded, cached and runs
 #   Run 2: the same URL again is a cache hit (no new request)
 #   Run L: a plain http URL that asks for a login exits 1 with "use
@@ -40,7 +45,7 @@
 #   Run 5: ./configure --disable-networking still builds
 #
 # Usage: tools/url_e2e.sh
-#   RA=<retroarch binary>          default: ./retroarch in the repo
+#   RA=<cartlink binary>           default: ./cartlink in the repo
 #   URL_E2E_BASE=<dir>             default: ~/retro-link (test-cores/,
 #                                  test-content/ live there)
 #   URL_E2E_SKIP_NONET=1           skip run 5 (it builds a full copy)
@@ -49,7 +54,7 @@
 set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-RA=${RA:-$ROOT/retroarch}
+RA=${RA:-$ROOT/cartlink}
 BASE=${URL_E2E_BASE:-$HOME/retro-link}
 CORES=$BASE/test-cores
 CONTENT=$BASE/test-content
@@ -223,6 +228,63 @@ if [ $rc -eq 0 ] \
    pass "run 0: local file loads through the normal path"
 else
    fail "run 0: local file (exit $rc, see $WORK/run0.log)"
+fi
+
+# ----------------------------- run I: one-time import from RetroArch folder
+# No --config: Cartlink uses its own folder ($XDG_CONFIG_HOME/cartlink,
+# created fresh). The RetroArch folder next to it holds logins, servers
+# and a retroarch.cfg: the two url files are copied (0600 logins,
+# marker written), retroarch.cfg is not imported, and nothing in the
+# RetroArch folder changes. A second start after the copied logins are
+# deleted does not copy them again.
+
+PI=$(make_profile import)
+OLDD=$PI/home/.config/retroarch
+NEWD=$PI/home/.config/cartlink
+mkdir -p "$OLDD"
+printf '%s\n' 'url_login_https://nas.example_user = "alice"' \
+   'url_login_https://nas.example_pass = "pw"' > "$OLDD/url_logins.cfg"
+printf '%s\n' 'url_server_0 = "https://nas.example/games/"' > "$OLDD/url_servers.cfg"
+printf '%s\n' 'video_driver = "gl"' 'savefile_directory = "/legacy-marker"' \
+   > "$OLDD/retroarch.cfg"
+chmod 644 "$OLDD/url_logins.cfg"
+cp -p "$OLDD/url_logins.cfg" "$WORK/old_logins.cfg"
+cp -p "$OLDD/url_servers.cfg" "$WORK/old_servers.cfg"
+cp -p "$OLDD/retroarch.cfg" "$WORK/old_retroarch.cfg"
+runI()
+{
+   HOME=$PI/home XDG_CONFIG_HOME=$PI/home/.config \
+      $LIMIT $NICE "$RA" --appendconfig="$PI/retroarch.cfg" --verbose \
+      --log-file="$1" -L "$CORE" "$ROM" --max-frames=60 \
+      </dev/null >"$1.out" 2>&1
+}
+runI "$WORK/runI.log"
+rc=$?
+mode=$(stat -c %a "$NEWD/url_logins.cfg" 2>/dev/null)
+if [ $rc -eq 0 ] \
+      && cmp -s "$NEWD/url_logins.cfg" "$WORK/old_logins.cfg" \
+      && cmp -s "$NEWD/url_servers.cfg" "$WORK/old_servers.cfg" \
+      && [ "$mode" = 600 ] && [ -f "$NEWD/url_import.done" ] \
+      && [ -f "$NEWD/retroarch.cfg" ] \
+      && ! grep -q legacy-marker "$NEWD/retroarch.cfg" \
+      && cmp -s "$OLDD/url_logins.cfg" "$WORK/old_logins.cfg" \
+      && cmp -s "$OLDD/url_servers.cfg" "$WORK/old_servers.cfg" \
+      && cmp -s "$OLDD/retroarch.cfg" "$WORK/old_retroarch.cfg" \
+      && [ "$(stat -c %a "$OLDD/url_logins.cfg")" = 644 ] \
+      && grep -q "Copied 2 saved login/server file(s)" "$WORK/runI.log"; then
+   pass "run I: logins + servers copied once into the Cartlink folder, RetroArch folder untouched"
+else
+   fail "run I: import (exit $rc, mode $mode, see $WORK/runI.log)"
+fi
+rm -f "$NEWD/url_logins.cfg"
+runI "$WORK/runI2.log"
+rc=$?
+if [ $rc -eq 0 ] && [ ! -e "$NEWD/url_logins.cfg" ] \
+      && cmp -s "$OLDD/url_logins.cfg" "$WORK/old_logins.cfg" \
+      && ! grep -q "Copied" "$WORK/runI2.log"; then
+   pass "run I: deleted logins are not copied again"
+else
+   fail "run I: second start (exit $rc, see $WORK/runI2.log)"
 fi
 
 # ------------------------------------------------- run 1: download + run
@@ -628,7 +690,7 @@ else
    if (cd "$NN" && $NICE ./configure --disable-networking --disable-ffmpeg \
             --disable-qt >"$WORK/run5-configure.log" 2>&1 \
          && $NICE make -j16 >"$WORK/run5-make.log" 2>&1) \
-         && [ -x "$NN/retroarch" ]; then
+         && [ -x "$NN/cartlink" ]; then
       pass "run 5: --disable-networking build compiles"
    else
       fail "run 5: --disable-networking build (see $WORK/run5-make.log)"

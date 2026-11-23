@@ -15,6 +15,7 @@
  *  You should have received a copy of the GNU General Public License along with RetroArch.
  *  If not, see <http://www.gnu.org/licenses/>.
  */
+/* Modified by Cartlink contributors, 2026. */
 
 #if defined(HAVE_CONFIG_H)
 #include "../config.h"
@@ -4618,7 +4619,10 @@ void menu_entries_get_core_title(char *s, size_t len)
       (sysinfo && sysinfo->library_version)
       ? sysinfo->library_version
       : "";
-   size_t _len = strlcpy(s, PACKAGE_VERSION, len);
+   /* Cartlink: "Cartlink (RetroArch <version>) - <core>". */
+   size_t _len = strlcpy(s, "Cartlink (RetroArch ", len);
+   _len += strlcpy(s + _len, PACKAGE_VERSION, len - _len);
+   _len += strlcpy(s + _len, ")", len - _len);
 #if defined(_MSC_VER)
    _len += strlcpy(s + _len, msvc_vercode_to_str(_MSC_VER), len - _len);
 #endif

@@ -1,3 +1,4 @@
+/* Modified by Cartlink contributors, 2026. */
 #if defined(_MSC_VER) && !defined(_XBOX) && (_MSC_VER >= 1500 && _MSC_VER < 1900)
 #if (_MSC_VER >= 1700)
 /* https://support.microsoft.com/en-us/kb/980263 */
@@ -14468,7 +14469,7 @@ MSG_HASH(
    )
 MSG_HASH(
    MSG_PROGRAM,
-   "全能模拟器"
+   "Cartlink"
    )
 MSG_HASH(
    MSG_READING_FIRST_DATA_TRACK,

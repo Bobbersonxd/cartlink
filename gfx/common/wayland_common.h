@@ -12,6 +12,7 @@
  *  You should have received a copy of the GNU General Public License along with RetroArch.
  *  If not, see <http://www.gnu.org/licenses/>.
  */
+/* Modified by Cartlink contributors, 2026. */
 
 #pragma once
 
@@ -21,7 +22,7 @@
 
 #include "../../input/common/wayland_common.h"
 
-#define WAYLAND_APP_ID "com.libretro.RetroArch"
+#define WAYLAND_APP_ID "io.github.cartlink.Cartlink"
 
 typedef struct toplevel_listener
 {

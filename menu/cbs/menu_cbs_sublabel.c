@@ -12,6 +12,7 @@
  *  You should have received a copy of the GNU General Public License along with RetroArch.
  *  If not, see <http://www.gnu.org/licenses/>.
  */
+/* Modified by Cartlink contributors, 2026. */
 
 #include <compat/strl.h>
 
@@ -1804,7 +1805,8 @@ static int action_bind_sublabel_netplay_room(file_list_t *list,
    if (room_index >= (unsigned)net_st->room_count)
       return -1;
    room  = &net_st->room_list[room_index];
-   _len  = strlcpy(s, msg_hash_to_str(MSG_PROGRAM), len);
+   /* Cartlink: the room's frontend version is a RetroArch version. */
+   _len  = strlcpy(s, "RetroArch", len);
    _len += snprintf(s + _len, len - _len,
       ": %s (%s)\n"
       "%s: %s (%s)\n"

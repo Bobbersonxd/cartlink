@@ -1,4 +1,5 @@
 /*  RetroArch - A frontend for libretro.
+ *  Copyright (C) 2026 Cartlink contributors
  *
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -75,6 +76,25 @@ bool url_logins_is_private_file(const char *name);
  * A-Z a-z 0-9 + /, '=' only as 1-2 trailing padding): the only input
  * a sealed (Windows) value is decoded from. */
 bool url_logins_base64_ok(const char *s);
+
+/* The folder where RetroArch (and builds before Cartlink got its own
+ * folder) keep url_logins.cfg / url_servers.cfg: Linux and other Unix
+ * $XDG_CONFIG_HOME/retroarch or ~/.config/retroarch, macOS
+ * ~/Library/Application Support/RetroArch/config, Windows %APPDATA%.
+ * False where there is none (Android, consoles) or HOME is unset. */
+bool url_logins_legacy_dir(char *s, size_t len);
+
+/* One-time import for users upgrading from a build that shared
+ * RetroArch's folder: each of url_logins.cfg and url_servers.cfg that
+ * is missing in new_dir but present in old_dir is COPIED (never moved;
+ * old_dir is never changed). retroarch.cfg is never touched. After a
+ * copy, new_dir gets the marker file url_import.done, and no import
+ * runs again while it is there (so "Forget Saved Logins" stays
+ * forgotten). The copied logins file is 0600 on POSIX; on Windows a
+ * plain copy is sealed by url_logins_set_path (call this first).
+ * Returns the number of files copied, 0 if nothing to do (same folder,
+ * marker present, nothing to copy), -1 if a copy failed. */
+int url_logins_import_legacy(const char *new_dir, const char *old_dir);
 
 RETRO_END_DECLS
 

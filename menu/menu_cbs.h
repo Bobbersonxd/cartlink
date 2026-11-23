@@ -12,6 +12,7 @@
  *  You should have received a copy of the GNU General Public License along with RetroArch.
  *  If not, see <http://www.gnu.org/licenses/>.
  */
+/* Modified by Cartlink contributors, 2026. */
 
 #ifndef MENU_CBS_H__
 #define MENU_CBS_H__

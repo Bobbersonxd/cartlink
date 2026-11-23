@@ -1,3 +1,4 @@
+# Modified by Cartlink contributors, 2026.
 *.o
 *.obj
 *.pdb
@@ -28,6 +29,10 @@
 /retroarch.cfg
 /retroarch.exe
 /retroarch_debug.exe
+/cartlink
+/cartlink_angle
+/cartlink.exe
+/cartlink_angle.exe
 /config.h
 /config.mk
 *.ncb
@@ -278,3 +283,11 @@ gfx/drivers/rsx_shaders/modern_opaque.fpo
 gfx/drivers/rsx_shaders/modern_opaque.vpo
 pkg/psl1ght/pkg/USRDIR/shaders_cg/
 !pkg/psl1ght/pkg/USRDIR/system/
+
+# Cartlink: never commit cores, games or BIOS files from test folders
+/build/
+/test-content/
+/test-cores/
+tests-other/**/*.so
+tests-other/**/*.dll
+tests-other/**/*.dylib

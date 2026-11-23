@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Cartlink contributors. GNU GPL v3 or later (see COPYING).
 # End-to-end check: quitting RetroArch while "Load from URL" is still
 # downloading must exit cleanly (no crash, no AddressSanitizer report).
 #
@@ -9,8 +10,8 @@
 # desktop's). serve.py's /slow route sends 64 MiB slowly, so the
 # download is still running when QUIT arrives.
 #
-# Usage: tools/url_e2e_quit.py [<retroarch binary>]
-#   default binary: ./retroarch in the repo. An ASan build
+# Usage: tools/url_e2e_quit.py [<cartlink binary>]
+#   default binary: ./cartlink in the repo. An ASan build
 #   (make SANITIZER=address) also has its report checked.
 # Needs: gamescope, python3-xlib, iproute2 (ss).
 
@@ -23,7 +24,7 @@ import tempfile
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RA = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else ROOT + "/retroarch"
+RA = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else ROOT + "/cartlink"
 SERVE = ROOT + "/tests-other/url_content/serve.py"
 NICE = ["nice", "-n", "19", "ionice", "-c3"]
 

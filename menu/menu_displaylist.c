@@ -15,6 +15,7 @@
  *  You should have received a copy of the GNU General Public License along with RetroArch.
  *  If not, see <http://www.gnu.org/licenses/>.
  */
+/* Modified by Cartlink contributors, 2026. */
 
 #include <stddef.h>
 
@@ -1842,8 +1843,16 @@ static unsigned menu_displaylist_parse_system_info(file_list_t *list)
 {
    char entry[NAME_MAX_LENGTH];
    unsigned count = 0;
+   size_t _len;
+   /* Cartlink: say what this program is, then the RetroArch version
+    * it is based on. */
+   if (menu_entries_append(list,
+         msg_hash_to_str(MENU_ENUM_LABEL_VALUE_SYSTEM_INFO_CARTLINK), "",
+         MENU_ENUM_LABEL_SYSTEM_INFO_ENTRY, MENU_SETTINGS_CORE_INFO_NONE,
+         0, 0, NULL))
+      count++;
    /* RetroArch Version */
-   size_t _len = strlcpy(entry,
+   _len = strlcpy(entry,
          msg_hash_to_str(MENU_ENUM_LABEL_VALUE_SYSTEM_INFO_RETROARCH_VERSION),
          sizeof(entry));
    _len       += strlcpy(entry + _len, ": ", sizeof(entry) - _len);

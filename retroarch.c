@@ -16,6 +16,7 @@
  *  You should have received a copy of the GNU General Public License along with RetroArch.
  *  If not, see <http://www.gnu.org/licenses/>.
  */
+/* Modified by Cartlink contributors, 2026. */
 
 #ifdef _WIN32
 #ifdef _XBOX
@@ -6455,6 +6456,7 @@ static void retroarch_print_version(void)
          msg_hash_to_str(MSG_PROGRAM),
          msg_hash_to_str(MSG_LIBRETRO_FRONTEND));
 
+   fprintf(stdout, "Unofficial fork of RetroArch, not affiliated with libretro.\n");
    fprintf(stdout, "Version: %s", PACKAGE_VERSION);
 #ifdef HAVE_GIT_VERSION
    fprintf(stdout, " (Git %s)", retroarch_git_version);

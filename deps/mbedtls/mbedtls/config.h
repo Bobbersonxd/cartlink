@@ -7,6 +7,7 @@
  *  or disable features selectively, and reduce the global
  *  memory footprint.
  */
+/* Modified by Cartlink contributors, 2026. */
 /*
  *  Copyright The Mbed TLS Contributors
  *  SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later

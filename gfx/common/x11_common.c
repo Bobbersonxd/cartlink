@@ -13,6 +13,7 @@
  *  You should have received a copy of the GNU General Public License along with RetroArch.
  *  If not, see <http://www.gnu.org/licenses/>.
  */
+/* Modified by Cartlink contributors, 2026. */
 
 #include <stdlib.h>
 #include <string.h>
@@ -170,8 +171,8 @@ static void x11_set_window_class(Display *dpy, Window win)
 {
    XClassHint hint;
 
-   hint.res_name   = (char*)"retroarch"; /* Broken header. */
-   hint.res_class  = (char*)"retroarch";
+   hint.res_name   = (char*)"cartlink"; /* Broken header. */
+   hint.res_class  = (char*)"cartlink";
    XSetClassHint(dpy, win, &hint);
 }
 

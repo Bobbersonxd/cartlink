@@ -1,3 +1,4 @@
+/* Modified by Cartlink contributors, 2026. */
 #ifdef HAVE_LIBNX
 MSG_HASH(
    MENU_ENUM_LABEL_SWITCH_CPU_PROFILE,

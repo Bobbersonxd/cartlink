@@ -1,4 +1,5 @@
 /*  RetroArch - A frontend for libretro.
+ *  Copyright (C) 2026 Cartlink contributors
  *
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -2077,6 +2078,161 @@ static void test_logins_base64_ok(void)
    }
 }
 
+static void write_text(const char *dir, const char *name, const char *text)
+{
+   char p[512];
+   FILE *f;
+   snprintf(p, sizeof(p), "%s/%s", dir, name);
+   if ((f = fopen(p, "wb")))
+   {
+      fputs(text, f);
+      fclose(f);
+   }
+}
+
+static bool text_is(const char *dir, const char *name, const char *text)
+{
+   char p[512];
+   char buf[1024];
+   size_t n;
+   FILE *f;
+   snprintf(p, sizeof(p), "%s/%s", dir, name);
+   if (!(f = fopen(p, "rb")))
+      return false;
+   n = fread(buf, 1, sizeof(buf) - 1, f);
+   fclose(f);
+   buf[n] = '\0';
+   return strcmp(buf, text) == 0;
+}
+
+/* One-time copy of url_logins.cfg / url_servers.cfg from the RetroArch
+ * folder into Cartlink's own folder. */
+static void test_logins_import_legacy(void)
+{
+   char root[]  = "/tmp/url_import_test_XXXXXX";
+   char oldd[512];
+   char newd[512];
+   char p[1100];
+   char d[512];
+   const char *logins  = "url_login_https://nas.example_user = \"alice\"\n"
+                         "url_login_https://nas.example_pass = \"pw\"\n";
+   const char *servers = "url_server_0 = \"https://nas.example/games/\"\n";
+   char *old_xdg  = getenv("XDG_CONFIG_HOME") ? strdup(getenv("XDG_CONFIG_HOME")) : NULL;
+   char *old_home = getenv("HOME") ? strdup(getenv("HOME")) : NULL;
+#ifndef _WIN32
+   struct stat st;
+#endif
+
+   if (!mkdtemp(root))
+   {
+      EXPECT(!"mkdtemp");
+      return;
+   }
+   snprintf(oldd, sizeof(oldd), "%s/retroarch", root);
+   snprintf(newd, sizeof(newd), "%s/cartlink", root);
+   mkdir(oldd, 0700);
+   mkdir(newd, 0700);
+
+   /* Legacy folder: XDG_CONFIG_HOME first, then ~/.config/retroarch. */
+#if !defined(__APPLE__) && !defined(_WIN32)
+   setenv("XDG_CONFIG_HOME", root, 1);
+   EXPECT(url_logins_legacy_dir(d, sizeof(d)));
+   EXPECT_STR(d, oldd);
+   unsetenv("XDG_CONFIG_HOME");
+   setenv("HOME", "/nonexistent-home", 1);
+   EXPECT(url_logins_legacy_dir(d, sizeof(d)));
+   EXPECT_STR(d, "/nonexistent-home/.config/retroarch");
+   unsetenv("HOME");
+   EXPECT(!url_logins_legacy_dir(d, sizeof(d)));
+#endif
+
+   /* Nothing in the old folder: nothing copied, no marker. */
+   EXPECT(url_logins_import_legacy(newd, oldd) == 0);
+   snprintf(p, sizeof(p), "%s/url_import.done", newd);
+   EXPECT(!file_exists(p));
+
+   /* Both files and a retroarch.cfg in the old folder: the two are
+    * copied, retroarch.cfg is not, the originals stay. */
+   write_text(oldd, "url_logins.cfg", logins);
+   write_text(oldd, "url_servers.cfg", servers);
+   write_text(oldd, "retroarch.cfg", "video_driver = \"gl\"\n");
+   EXPECT(url_logins_import_legacy(newd, oldd) == 2);
+   EXPECT(text_is(newd, "url_logins.cfg", logins));
+   EXPECT(text_is(newd, "url_servers.cfg", servers));
+   EXPECT(text_is(oldd, "url_logins.cfg", logins));
+   EXPECT(text_is(oldd, "url_servers.cfg", servers));
+   snprintf(p, sizeof(p), "%s/retroarch.cfg", newd);
+   EXPECT(!file_exists(p));
+   snprintf(p, sizeof(p), "%s/url_logins.cfg.tmp", newd);
+   EXPECT(!file_exists(p));
+   snprintf(p, sizeof(p), "%s/url_import.done", newd);
+   EXPECT(file_exists(p));
+#ifndef _WIN32
+   snprintf(p, sizeof(p), "%s/url_logins.cfg", newd);
+   EXPECT(stat(p, &st) == 0 && (st.st_mode & 0777) == 0600);
+#endif
+   /* The copy is a normal logins file. */
+   snprintf(p, sizeof(p), "%s/url_logins.cfg", newd);
+   url_logins_set_path(p);
+   {
+      char user[64], pass[64];
+      EXPECT(url_logins_get("https://nas.example/x.gb", user, sizeof(user),
+            pass, sizeof(pass)));
+      EXPECT_STR(user, "alice");
+      EXPECT_STR(pass, "pw");
+   }
+
+   /* Forgotten in Cartlink: not imported again (marker). */
+   EXPECT(url_logins_forget_all());
+   EXPECT(url_logins_import_legacy(newd, oldd) == 0);
+   snprintf(p, sizeof(p), "%s/url_logins.cfg", newd);
+   EXPECT(!file_exists(p));
+   EXPECT(text_is(oldd, "url_logins.cfg", logins));
+   url_logins_set_path(NULL);
+
+   /* Without the marker, an existing Cartlink file is never replaced;
+    * only the missing one is copied. */
+   snprintf(p, sizeof(p), "%s/url_import.done", newd);
+   remove(p);
+   write_text(newd, "url_servers.cfg", "mine\n");
+   EXPECT(url_logins_import_legacy(newd, oldd) == 1);
+   EXPECT(text_is(newd, "url_servers.cfg", "mine\n"));
+   EXPECT(text_is(newd, "url_logins.cfg", logins));
+
+   /* Same folder (with or without a trailing slash): no-op. */
+   remove(p);
+   strcpy(d, oldd);
+   strcat(d, "/");
+   EXPECT(url_logins_import_legacy(d, oldd) == 0);
+   EXPECT(url_logins_import_legacy(oldd, oldd) == 0);
+   EXPECT(url_logins_import_legacy(NULL, oldd) == 0);
+   EXPECT(url_logins_import_legacy(newd, "") == 0);
+   snprintf(p, sizeof(p), "%s/url_import.done", oldd);
+   EXPECT(!file_exists(p));
+
+   if (old_xdg)
+      setenv("XDG_CONFIG_HOME", old_xdg, 1);
+   if (old_home)
+      setenv("HOME", old_home, 1);
+   free(old_xdg);
+   free(old_home);
+   {
+      const char *names[] = { "url_logins.cfg", "url_servers.cfg",
+         "retroarch.cfg", "url_import.done", NULL };
+      int i;
+      for (i = 0; names[i]; i++)
+      {
+         snprintf(p, sizeof(p), "%s/%s", oldd, names[i]);
+         remove(p);
+         snprintf(p, sizeof(p), "%s/%s", newd, names[i]);
+         remove(p);
+      }
+      rmdir(oldd);
+      rmdir(newd);
+      rmdir(root);
+   }
+}
+
 static void test_logins_private_files(void)
 {
    EXPECT(url_logins_is_private_file("config/url_logins.cfg"));
@@ -2151,6 +2307,7 @@ int main(int argc, char **argv)
    test_servers_windows_replace();
    test_logins_windows_replace();
    test_logins_legacy();
+   test_logins_import_legacy();
    test_logins_private_files();
    test_logins_base64_ok();
    test_safety_blocks_programs();

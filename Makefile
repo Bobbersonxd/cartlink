@@ -1,3 +1,4 @@
+# Modified by Cartlink contributors, 2026.
 HAVE_FILE_LOGGER=1
 HAVE_STATESTREAM?=1
 NEED_CXX_LINKER?=0
@@ -16,9 +17,9 @@ include config.mk
 -include Makefile.local
 
 ifeq ($(HAVE_ANGLE), 1)
-TARGET = retroarch_angle
+TARGET = cartlink_angle
 else
-TARGET = retroarch
+TARGET = cartlink
 endif
 
 OBJ :=
@@ -255,61 +256,27 @@ $(OBJDIR)/%.o: %.rc $(HEADERS)
 	@$(if $(Q), $(shell echo echo WINDRES $<),)
 	$(Q)$(WINDRES) $(DEFINES) -o $@ $<
 
+# Cartlink: installs only its own files (binary, desktop entry, icon,
+# docs), never RetroArch's /etc/retroarch.cfg, man pages, cg2glsl or
+# assets, so it can sit next to an installed RetroArch.
 install: $(TARGET)
 	mkdir -p $(DESTDIR)$(BIN_DIR) 2>/dev/null || /bin/true
-	mkdir -p $(DESTDIR)$(GLOBAL_CONFIG_DIR) 2>/dev/null || /bin/true
 	mkdir -p $(DESTDIR)$(DATA_DIR)/applications 2>/dev/null || /bin/true
-	mkdir -p $(DESTDIR)$(DATA_DIR)/metainfo 2>/dev/null || /bin/true
-	mkdir -p $(DESTDIR)$(DOC_DIR) 2>/dev/null || /bin/true
-	mkdir -p $(DESTDIR)$(MAN_DIR)/man6 2>/dev/null || /bin/true
-	mkdir -p $(DESTDIR)$(DATA_DIR)/pixmaps 2>/dev/null || /bin/true
+	mkdir -p $(DESTDIR)$(DATA_DIR)/icons/hicolor/256x256/apps 2>/dev/null || /bin/true
+	mkdir -p $(DESTDIR)$(DATA_DIR)/doc/cartlink 2>/dev/null || /bin/true
 	cp $(TARGET) $(DESTDIR)$(BIN_DIR)
-	cp tools/cg2glsl.py $(DESTDIR)$(BIN_DIR)/retroarch-cg2glsl
-	cp retroarch.cfg $(DESTDIR)$(GLOBAL_CONFIG_DIR)
-	cp com.libretro.RetroArch.metainfo.xml $(DESTDIR)$(DATA_DIR)/metainfo
-	cp com.libretro.RetroArch.desktop $(DESTDIR)$(DATA_DIR)/applications
-	cp docs/retroarch.6 $(DESTDIR)$(MAN_DIR)/man6
-	cp docs/retroarch-cg2glsl.6 $(DESTDIR)$(MAN_DIR)/man6
-	cp media/com.libretro.RetroArch.svg $(DESTDIR)$(DATA_DIR)/pixmaps
-	cp COPYING $(DESTDIR)$(DOC_DIR)
-	cp README.md $(DESTDIR)$(DOC_DIR)
+	cp io.github.cartlink.Cartlink.desktop $(DESTDIR)$(DATA_DIR)/applications
+	cp media/io.github.cartlink.Cartlink.png $(DESTDIR)$(DATA_DIR)/icons/hicolor/256x256/apps
+	cp COPYING README.md NOTICE-CARTLINK.md CHANGES-CARTLINK.md $(DESTDIR)$(DATA_DIR)/doc/cartlink
 	chmod 755 $(DESTDIR)$(BIN_DIR)/$(TARGET)
-	chmod 755 $(DESTDIR)$(BIN_DIR)/retroarch-cg2glsl
-	chmod 644 $(DESTDIR)$(GLOBAL_CONFIG_DIR)/retroarch.cfg
-	chmod 644 $(DESTDIR)$(DATA_DIR)/applications/com.libretro.RetroArch.desktop
-	chmod 644 $(DESTDIR)$(DATA_DIR)/metainfo/com.libretro.RetroArch.metainfo.xml
-	chmod 644 $(DESTDIR)$(MAN_DIR)/man6/retroarch.6
-	chmod 644 $(DESTDIR)$(MAN_DIR)/man6/retroarch-cg2glsl.6
-	chmod 644 $(DESTDIR)$(DATA_DIR)/pixmaps/com.libretro.RetroArch.svg
-	@if test -d media/assets && test $(HAVE_ASSETS); then \
-		echo "Installing media assets..."; \
-		mkdir -p $(DESTDIR)$(ASSETS_DIR)/assets; \
-		if test $(HAVE_MATERIALUI) = 1; then \
-			cp -r media/assets/glui/ $(DESTDIR)$(ASSETS_DIR)/assets; \
-		fi; \
-		if test $(HAVE_XMB) = 1; then \
-			cp -r media/assets/xmb/ $(DESTDIR)$(ASSETS_DIR)/assets; \
-		fi; \
-		if test $(HAVE_OZONE) = 1; then \
-			cp -r media/assets/ozone/ $(DESTDIR)$(ASSETS_DIR)/assets; \
-		fi; \
-		cp media/assets/COPYING $(DESTDIR)$(DOC_DIR)/COPYING.assets; \
-		echo "Asset copying done."; \
-	fi
+	chmod 644 $(DESTDIR)$(DATA_DIR)/applications/io.github.cartlink.Cartlink.desktop
+	chmod 644 $(DESTDIR)$(DATA_DIR)/icons/hicolor/256x256/apps/io.github.cartlink.Cartlink.png
 
 uninstall:
 	rm -f $(DESTDIR)$(BIN_DIR)/$(TARGET)
-	rm -f $(DESTDIR)$(BIN_DIR)/retroarch-cg2glsl
-	rm -f $(DESTDIR)$(GLOBAL_CONFIG_DIR)/retroarch.cfg
-	rm -f $(DESTDIR)$(DATA_DIR)/applications/com.libretro.RetroArch.desktop
-	rm -f $(DESTDIR)$(DATA_DIR)/metainfo/com.libretro.RetroArch.metainfo.xml
-	rm -f $(DESTDIR)$(DATA_DIR)/pixmaps/com.libretro.RetroArch.svg
-	rm -f $(DESTDIR)$(DOC_DIR)/COPYING
-	rm -f $(DESTDIR)$(DOC_DIR)/COPYING.assets
-	rm -f $(DESTDIR)$(DOC_DIR)/README.md
-	rm -f $(DESTDIR)$(MAN_DIR)/man6/retroarch.6
-	rm -f $(DESTDIR)$(MAN_DIR)/man6/retroarch-cg2glsl.6
-	rm -rf $(DESTDIR)$(ASSETS_DIR)
+	rm -f $(DESTDIR)$(DATA_DIR)/applications/io.github.cartlink.Cartlink.desktop
+	rm -f $(DESTDIR)$(DATA_DIR)/icons/hicolor/256x256/apps/io.github.cartlink.Cartlink.png
+	rm -rf $(DESTDIR)$(DATA_DIR)/doc/cartlink
 
 clean:
 	@$(if $(Q), echo $@,)

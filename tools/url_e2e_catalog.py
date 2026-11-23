@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Cartlink contributors. GNU GPL v3 or later (see COPYING).
 # End-to-end check of the "Load from URL" game list menus: a folder
 # link opens a game list, folders open one level deeper, Back goes up,
 # a file is downloaded, an empty folder says so, the server is saved
@@ -15,9 +16,9 @@
 # display is the desktop's). gamescopectl (this gamescope's socket
 # only) saves a screenshot of each step into the shots folder.
 #
-# Usage: tools/url_e2e_catalog.py [<retroarch binary> [<shots dir>]]
+# Usage: tools/url_e2e_catalog.py [<cartlink binary> [<shots dir>]]
 #   An ASan binary (make SANITIZER=address) also has its report checked.
-#   default binary: ./retroarch in the repo; shots are only kept when
+#   default binary: ./cartlink in the repo; shots are only kept when
 #   a shots dir is given.
 # Needs: gamescope (+ gamescopectl), python3-xlib.
 
@@ -32,7 +33,7 @@ import time
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RA = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else ROOT + "/retroarch"
+RA = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else ROOT + "/cartlink"
 SHOTS = os.path.abspath(sys.argv[2]) if len(sys.argv) > 2 else None
 SERVE = ROOT + "/tests-other/url_content/serve.py"
 NICE = ["nice", "-n", "19", "ionice", "-c3"]

@@ -1,3 +1,4 @@
+# Modified by Cartlink contributors, 2026.
 LOCAL_PATH := $(call my-dir)
 
 include $(CLEAR_VARS)

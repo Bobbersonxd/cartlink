@@ -1,3 +1,4 @@
+# Copyright (C) 2026 Cartlink contributors. GNU GPL v3 or later (see COPYING).
 # Unit tests for network/url_content.c (pure logic, no network) and
 # network/url_logins.c + network/url_servers.c (temp files under /tmp).
 # Usage: make -C tests-other/url_content test

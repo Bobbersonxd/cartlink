@@ -15,6 +15,7 @@
  * * You should have received a copy of the GNU General Public License along with RetroArch.
  * If not, see <http://www.gnu.org/licenses/>.
  */
+/* Modified by Cartlink contributors, 2026. */
 
 #include <stdio.h>
 #include <stdint.h>
@@ -1791,15 +1792,15 @@ static void frontend_unix_get_env(int *argc,
    if (xdg)
    {
       size_t _len = strlcpy(base_path, xdg, sizeof(base_path));
-      strlcpy(base_path + _len, "/retroarch", sizeof(base_path) - _len);
+      strlcpy(base_path + _len, "/cartlink", sizeof(base_path) - _len);
    }
    else if (home)
    {
       size_t _len = strlcpy(base_path, home, sizeof(base_path));
-      strlcpy(base_path + _len, "/.config/retroarch", sizeof(base_path) - _len);
+      strlcpy(base_path + _len, "/.config/cartlink", sizeof(base_path) - _len);
    }
    else
-      strlcpy(base_path, "retroarch", sizeof(base_path));
+      strlcpy(base_path, "cartlink", sizeof(base_path));
 #endif
 
    if (!string_is_empty(libretro_directory))
@@ -2385,12 +2386,12 @@ static int frontend_unix_parse_drive_list(void *data, bool load_content)
    if (xdg)
    {
       size_t _len = strlcpy(base_path, xdg, sizeof(base_path));
-      strlcpy(base_path + _len, "/retroarch", sizeof(base_path) - _len);
+      strlcpy(base_path + _len, "/cartlink", sizeof(base_path) - _len);
    }
    else if (home)
    {
       size_t _len = strlcpy(base_path, home, sizeof(base_path));
-      strlcpy(base_path + _len, "/.config/retroarch", sizeof(base_path) - _len);
+      strlcpy(base_path + _len, "/.config/cartlink", sizeof(base_path) - _len);
    }
 #endif
 

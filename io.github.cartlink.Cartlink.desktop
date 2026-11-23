@@ -1,0 +1,16 @@
+[Desktop Entry]
+Version=1.5
+Type=Application
+Name=Cartlink
+GenericName=Game launcher with Load from URL
+Comment=Unofficial fork of RetroArch: load your own games from a link and play them together over netplay
+TryExec=cartlink
+Exec=cartlink %F
+Icon=io.github.cartlink.Cartlink
+Categories=Game;Emulator;
+Keywords=retro;gaming;emulator;netplay;url;
+PrefersNonDefaultGPU=true
+SingleMainWindow=true
+StartupNotify=true
+StartupWMClass=cartlink
+Terminal=false

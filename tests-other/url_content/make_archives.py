@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Cartlink contributors. GNU GPL v3 or later (see COPYING).
 # Builds the .zip/.7z fixtures for the url_safety tests into <dir>.
 # Only dummy bytes: no real game or program files. Sizes that would be
 # too big to write (bombs, > 2 GiB) are claimed in hand-made zip

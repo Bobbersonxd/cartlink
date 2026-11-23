@@ -12,6 +12,7 @@
  *  You should have received a copy of the GNU General Public License along with RetroArch.
  *  If not, see <http://www.gnu.org/licenses/>.
  */
+/* Modified by Cartlink contributors, 2026. */
 
 #ifndef _MENU_DISPLAYLIST_H
 #define _MENU_DISPLAYLIST_H

@@ -12,6 +12,7 @@
  *  You should have received a copy of the GNU General Public License along with RetroArch.
  *  If not, see <http://www.gnu.org/licenses/>.
  */
+/* Modified by Cartlink contributors, 2026. */
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -34,7 +35,7 @@
 
 #define SPLASH_SHM_NAME "retroarch-wayland-vk-splash"
 
-#define WINDOW_TITLE "RetroArch"
+#define WINDOW_TITLE "Cartlink"
 
 #ifdef HAVE_LIBDECOR_H
 #include <libdecor.h>

@@ -1,4 +1,5 @@
 /*  RetroArch - A frontend for libretro.
+ *  Copyright (C) 2026 Cartlink contributors
  *
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -612,6 +613,107 @@ bool url_logins_is_private_file(const char *name)
       if (string_is_equal_noncase(base, names[i]))
          return true;
    return false;
+}
+
+bool url_logins_legacy_dir(char *s, size_t len)
+{
+#if defined(ANDROID) || defined(RARCH_CONSOLE) || defined(_XBOX) \
+   || defined(__WINRT__) || defined(IOS)
+   return false;
+#elif defined(_WIN32)
+   /* Upstream's fallback config folder on Windows. */
+   const char *appdata = getenv("APPDATA");
+   if (string_is_empty(appdata))
+      return false;
+   strlcpy(s, appdata, len);
+   return true;
+#else
+   const char *xdg  = getenv("XDG_CONFIG_HOME");
+   const char *home = getenv("HOME");
+#if defined(__APPLE__)
+   xdg = NULL;
+#endif
+   if (!string_is_empty(xdg))
+   {
+      fill_pathname_join(s, xdg, "retroarch", len);
+      return true;
+   }
+   if (string_is_empty(home))
+      return false;
+#if defined(__APPLE__)
+   fill_pathname_join(s, home,
+         "Library/Application Support/RetroArch/config", len);
+#else
+   fill_pathname_join(s, home, ".config/retroarch", len);
+#endif
+   return true;
+#endif
+}
+
+/* Copies src to dst through dst.tmp and a rename (0600 on POSIX
+ * before any byte is written). */
+static bool url_logins_copy_file(const char *src, const char *dst)
+{
+   char tmp[4096 + 8];
+   void *buf   = NULL;
+   int64_t len = 0;
+   bool ok     = false;
+   if (strlcpy(tmp, dst, sizeof(tmp)) >= sizeof(tmp) - 4)
+      return false;
+   strlcat(tmp, ".tmp", sizeof(tmp));
+   if (!filestream_read_file(src, &buf, &len) || !buf)
+      return false;
+   if (     url_logins_tighten(tmp, true)
+         && filestream_write_file(tmp, buf, len)
+         && filestream_rename(tmp, dst) == 0)
+      ok = true;
+   if (!ok && path_is_valid(tmp))
+      filestream_delete(tmp);
+   free(buf);
+   return ok;
+}
+
+int url_logins_import_legacy(const char *new_dir, const char *old_dir)
+{
+   static const char *names[] = { "url_logins.cfg", "url_servers.cfg", NULL };
+   char a[4096];
+   char b[4096];
+   char marker[4096];
+   int copied = 0;
+   size_t i;
+   if (string_is_empty(new_dir) || string_is_empty(old_dir))
+      return 0;
+   /* Same folder (also with a trailing slash): nothing to import. */
+   strlcpy(a, new_dir, sizeof(a));
+   strlcpy(b, old_dir, sizeof(b));
+   fill_pathname_slash(a, sizeof(a));
+   fill_pathname_slash(b, sizeof(b));
+   if (string_is_equal(a, b))
+      return 0;
+   fill_pathname_join(marker, new_dir, "url_import.done", sizeof(marker));
+   if (path_is_valid(marker))
+      return 0;
+   for (i = 0; names[i]; i++)
+   {
+      char src[4096];
+      char dst[4096];
+      fill_pathname_join(src, old_dir, names[i], sizeof(src));
+      fill_pathname_join(dst, new_dir, names[i], sizeof(dst));
+      if (path_is_valid(dst) || !path_is_valid(src))
+         continue;
+      if (!url_logins_copy_file(src, dst))
+         return -1;
+      copied++;
+   }
+   if (copied)
+   {
+      static const char note[] =
+         "Cartlink copied url_logins.cfg / url_servers.cfg from the\n"
+         "RetroArch folder once. The originals were left in place.\n"
+         "While this file is here, they are not copied again.\n";
+      filestream_write_file(marker, note, sizeof(note) - 1);
+   }
+   return copied;
 }
 
 bool url_logins_forget_all(void)

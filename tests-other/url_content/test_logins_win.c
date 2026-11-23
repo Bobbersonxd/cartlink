@@ -1,4 +1,5 @@
 /*  RetroArch - A frontend for libretro.
+ *  Copyright (C) 2026 Cartlink contributors
  *
  *  RetroArch is free software: you can redistribute it and/or modify it under the terms
  *  of the GNU General Public License as published by the Free Software Found-
@@ -21,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <windows.h>
 
 #include "../../network/url_logins.h"
 
@@ -247,6 +249,45 @@ int main(int argc, char **argv)
    EXPECT(url_logins_forget_all());
    EXPECT(slurp(path)[0] == '\0');
    url_logins_set_path(NULL);
+
+   /* One-time import from the RetroArch folder: a plain older file is
+    * copied as is, then sealed in the new folder when the path is set;
+    * the original stays plain and in place. */
+   {
+      char oldd[1024], newd[1024], oldf[1100], newf[1100], marker[1100];
+      const char *plain = "url_login_https://nas.local_user = \"testuser\"\n"
+                          "url_login_https://nas.local_pass = \"hunter2\"\n";
+      snprintf(oldd, sizeof(oldd), "%s\\old", argv[1]);
+      snprintf(newd, sizeof(newd), "%s\\new", argv[1]);
+      CreateDirectoryA(oldd, NULL);
+      CreateDirectoryA(newd, NULL);
+      snprintf(oldf, sizeof(oldf), "%s\\url_logins.cfg", oldd);
+      snprintf(newf, sizeof(newf), "%s\\url_logins.cfg", newd);
+      snprintf(marker, sizeof(marker), "%s\\url_import.done", newd);
+      remove(newf);
+      remove(marker);
+      put(oldf, plain);
+      EXPECT(url_logins_import_legacy(newd, oldd) == 1);
+      EXPECT_STR(slurp(newf), plain);
+      url_logins_set_path(newf);
+      t = slurp(newf);
+      EXPECT(strncmp(t, "# cartlink-logins v2 dpapi\n", 27) == 0);
+      EXPECT(strstr(t, "hunter2") == NULL);
+      EXPECT(url_logins_get("https://nas.local", user, sizeof(user),
+            pass, sizeof(pass)));
+      EXPECT_STR(user, "testuser");
+      EXPECT_STR(pass, "hunter2");
+      EXPECT_STR(slurp(oldf), plain);
+      /* Not again once imported, even after Forget. */
+      EXPECT(url_logins_forget_all());
+      EXPECT(url_logins_import_legacy(newd, oldd) == 0);
+      EXPECT(slurp(newf)[0] == '\0');
+      url_logins_set_path(NULL);
+      remove(oldf);
+      remove(marker);
+      RemoveDirectoryA(oldd);
+      RemoveDirectoryA(newd);
+   }
 
    if (g_failures)
    {

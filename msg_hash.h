@@ -14,6 +14,7 @@
  *  You should have received a copy of the GNU General Public License along with RetroArch.
  *  If not, see <http://www.gnu.org/licenses/>.
  */
+/* Modified by Cartlink contributors, 2026. */
 
 #ifndef __MSG_HASH_H
 #define __MSG_HASH_H
@@ -3561,6 +3562,7 @@ enum msg_hash_enums
    MENU_ENUM_LABEL_VALUE_SYSTEM_INFO_LAKKA_VERSION,
    MENU_ENUM_LABEL_VALUE_SYSTEM_INFO_DYNAMIC_SUPPORT,
    MENU_ENUM_LABEL_VALUE_SYSTEM_INFO_BUILD_DATE,
+   MENU_ENUM_LABEL_VALUE_SYSTEM_INFO_CARTLINK,
    MENU_ENUM_LABEL_VALUE_SYSTEM_INFO_RETROARCH_VERSION,
    MENU_ENUM_LABEL_VALUE_SYSTEM_INFO_GIT_VERSION,
    MENU_ENUM_LABEL_VALUE_SYSTEM_INFO_CPU_MODEL,

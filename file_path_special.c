@@ -13,6 +13,7 @@
  *  You should have received a copy of the GNU General Public License along with RetroArch.
  *  If not, see <http://www.gnu.org/licenses/>.
  */
+/* Modified by Cartlink contributors, 2026. */
 
 /* Assume W-functions do not work below Win2K and Xbox platforms */
 #if defined(_WIN32_WINNT) && _WIN32_WINNT < 0x0500 || defined(_XBOX)
@@ -80,7 +81,8 @@ bool fill_pathname_application_data(char *s, size_t len)
 
    if (appdata)
    {
-      strlcpy(s, appdata, len);
+      /* Cartlink: own folder, never RetroArch's %APPDATA% files. */
+      fill_pathname_join(s, appdata, "Cartlink", len);
       return true;
    }
 #else
@@ -92,7 +94,8 @@ bool fill_pathname_application_data(char *s, size_t len)
 
       if (appdata)
       {
-         strlcpy(s, appdata, len);
+         /* Cartlink: own folder, never RetroArch's %APPDATA% files. */
+         fill_pathname_join(s, appdata, "Cartlink", len);
          free(appdata);
          return true;
       }
@@ -139,12 +142,12 @@ bool fill_pathname_application_data(char *s, size_t len)
       }
    }
 
-   /* otherwise we use ~/Library/Application Support/RetroArch */
+   /* otherwise we use ~/Library/Application Support/Cartlink */
    const char *appdata = getenv("HOME");
    if (appdata)
    {
       fill_pathname_join(s, appdata,
-            "Library/Application Support/RetroArch", len);
+            "Library/Application Support/Cartlink", len);
       return true;
    }
 #endif
@@ -162,7 +165,7 @@ bool fill_pathname_application_data(char *s, size_t len)
    /* On Haiku, it is set by default to /home/user/config/settings */
    if (xdg)
    {
-      fill_pathname_join(s, xdg, "retroarch/", len);
+      fill_pathname_join(s, xdg, "cartlink/", len);
       return true;
    }
 
@@ -171,10 +174,10 @@ bool fill_pathname_application_data(char *s, size_t len)
 #ifdef __HAIKU__
       /* in theory never used as Haiku has XDG_CONFIG_HOME set by default */
       fill_pathname_join(s, appdata,
-            "config/settings/retroarch/", len);
+            "config/settings/cartlink/", len);
 #else
       fill_pathname_join(s, appdata,
-            ".config/retroarch/", len);
+            ".config/cartlink/", len);
 #endif
       return true;
    }
