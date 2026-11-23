@@ -1,0 +1,11 @@
+# Copyright (C) 2026 Cartlink contributors. GNU GPL v3 or later (see COPYING).
+# Installed to /etc/systemd/system by tools/cartlink-server/setup.sh.
+[Unit]
+Description=Cartlink: update the DuckDNS address every 5 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target

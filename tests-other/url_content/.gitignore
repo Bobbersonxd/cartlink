@@ -4,3 +4,4 @@ obj-mbed/
 certs/
 test_archive_agree
 obj-win/
+check_link

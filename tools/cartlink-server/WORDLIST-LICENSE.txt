@@ -1,0 +1,26 @@
+eff_short_wordlist_1.txt
+========================
+
+The file eff_short_wordlist_1.txt in this folder is "EFF's Short Wordlist #1"
+by the Electronic Frontier Foundation, unchanged:
+
+    https://www.eff.org/files/2016/09/08/eff_short_wordlist_1.txt
+    (described at https://www.eff.org/dice)
+    SHA-256: 8f5ca830b8bffb6fe39c9736c024a00a6a6411adb3f83a9be8bfeeb6e067ae69
+
+It is used under the Creative Commons Attribution licence of EFF's original
+website material: CC BY 3.0 US when the list was published in 2016
+(https://creativecommons.org/licenses/by/3.0/us/); EFF's copyright page now
+offers its original material under CC BY 4.0 International
+(https://creativecommons.org/licenses/by/4.0/, see
+https://www.eff.org/copyright).
+
+Attribution: word list (c) Electronic Frontier Foundation, https://www.eff.org/.
+
+cartlink-users picks 5 words from it at random (from /dev/urandom) for each
+new friend's password. If the file is missing or changed, cartlink-users uses
+24 random base32 characters instead.
+
+This licence covers only the word list. The rest of Cartlink is under the
+GNU General Public License, version 3 or later (see COPYING at the top of the
+source tree).

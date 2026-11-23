@@ -1,0 +1,17 @@
+# Copyright (C) 2026 Cartlink contributors. GNU GPL v3 or later (see COPYING).
+#
+# fail2ban jail for the Cartlink game server: an address with 10 failed
+# logins in 10 minutes is blocked for 1 hour (ports 80 and 443).
+# A friend who opens the server for the first time gets one 401 before
+# Cartlink asks for the login; that is far below the limit.
+# Install as /etc/fail2ban/jail.d/cartlink.local (see SETUP.md).
+
+[cartlink]
+enabled  = true
+filter = cartlink
+logpath = /var/log/caddy/cartlink.log
+backend  = auto
+port     = http,https
+maxretry = 10
+findtime = 10m
+bantime  = 1h

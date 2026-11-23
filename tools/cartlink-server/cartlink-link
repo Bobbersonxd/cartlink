@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Copyright (C) 2026 Cartlink contributors. GNU GPL v3 or later (see COPYING).
+#
+# Make Cartlink links with a fingerprint: URL#sha256=<64 hex digits>.
+# Cartlink checks the downloaded file against the fingerprint and refuses it
+# if it is not the very same file, so a link you send can't be swapped for
+# another file on the way or on the server.
+#   cartlink-link URL FILE
+#       one link: URL is where FILE can be downloaded
+#   cartlink-link --dir FOLDER BASE_URL
+#       a link for every file under FOLDER (hidden files and folders, whose
+#       names start with a dot, are skipped, like the server does), e.g.
+#       cartlink-link --dir /srv/cartlink/games https://example.duckdns.org/
+set -euo pipefail
+export LC_ALL=C # byte-wise %-encoding and sorting
+
+die() { echo "cartlink-link: $*" >&2; exit 1; }
+usage() {
+	echo "Usage: cartlink-link URL FILE" >&2
+	echo "       cartlink-link --dir FOLDER BASE_URL" >&2
+	exit 2
+}
+
+command -v sha256sum >/dev/null || die "sha256sum is missing (coreutils)"
+
+check_url() { # check_url URL
+	[[ $1 =~ ^https?://[^/[:space:]]+(/[^[:space:]]*)?$ ]] ||
+		die "the URL must start with https:// (or http://) and have no spaces, got '$1'"
+	[[ $1 != *'#'* ]] || die "the URL already has a '#' part, remove it first"
+}
+
+fingerprint() { # fingerprint FILE -> 64 lower-case hex digits
+	local h
+	[[ -f $1 && -r $1 ]] || die "can't read the file '$1'"
+	h=$(sha256sum < "$1") || die "can't read the file '$1'"
+	h=${h%% *}
+	[[ $h =~ ^[0-9a-f]{64}$ ]] || die "sha256sum gave an unexpected result"
+	printf '%s' "$h"
+}
+
+# %-encode one path part: everything but A-Z a-z 0-9 - . _ ~ becomes %XX.
+encode_part() {
+	local s=$1 out='' c i
+	for ((i = 0; i < ${#s}; i++)); do
+		c=${s:i:1}
+		case $c in
+			[A-Za-z0-9._~-]) out+=$c ;;
+			*) out+=$(printf '%%%02X' "'$c") ;;
+		esac
+	done
+	printf '%s' "$out"
+}
+
+encode_path() { # a/b c/d -> a/b%20c/d (no word splitting, so no globbing)
+	local s=$1 out=''
+	while [[ $s == */* ]]; do
+		out+=$(encode_part "${s%%/*}")/
+		s=${s#*/}
+	done
+	printf '%s%s' "$out" "$(encode_part "$s")"
+}
+
+one() { # one URL FILE
+	local h
+	check_url "$1"
+	h=$(fingerprint "$2") # a failed $(...) stops here (set -e)
+	printf '%s#sha256=%s\n' "$1" "$h"
+}
+
+dir() { # dir FOLDER BASE_URL
+	local folder=${1%/} base=$2 rel f h n=0
+	[[ -d $folder ]] || die "'$1' is not a folder"
+	check_url "$base"
+	[[ $base == */ ]] || base+=/
+	while IFS= read -r -d '' f; do
+		rel=${f#"$folder"/}
+		if [[ $rel == *$'\n'* ]]; then
+			echo "cartlink-link: skipped a file with a line break in its name" >&2
+			continue
+		fi
+		h=$(fingerprint "$f")
+		printf '%s%s#sha256=%s\n' "$base" "$(encode_path "$rel")" "$h"
+		n=$((n + 1))
+	done < <(find "$folder" -mindepth 1 \( -name '.*' -prune \) -o -type f -print0 | sort -z)
+	((n)) || echo "cartlink-link: no files found in $folder" >&2
+}
+
+case ${1:-} in
+	--dir) [[ $# == 3 ]] || usage; dir "$2" "$3" ;;
+	-h | --help | '') usage ;;
+	*) [[ $# == 2 ]] || usage; one "$1" "$2" ;;
+esac

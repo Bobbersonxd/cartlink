@@ -59,6 +59,11 @@ SRCS := test_url_content.c \
 
 BIN := test_url_content
 
+# check_link: one link through url_content_split_fingerprint (used by
+# tools/cartlink-server/test_server.sh to check cartlink-link's output).
+CHECK_BIN  := check_link
+CHECK_SRCS := check_link.c $(filter-out test_url_content.c,$(SRCS))
+
 # The fetch test has https: RetroArch's bundled mbedTLS, built once
 # into obj-mbed/.
 MBED_DIR     := ../../deps/mbedtls
@@ -104,7 +109,7 @@ FETCH_BIN := test_url_fetch
 # Throwaway test CA and a "localhost" certificate signed by it.
 CERTS := certs/ca.pem certs/srv.pem certs/srv.key
 
-.PHONY: all test fetch-test tls-online-test win-test clean
+.PHONY: all test fetch-test tls-online-test win-test check-link clean
 
 all: $(BIN) $(FETCH_BIN)
 
@@ -150,6 +155,11 @@ AGREE_SRCS := test_archive_agree.c \
 
 $(AGREE_BIN): $(AGREE_SRCS) $(SAFETY_OBJ) $(SZ_LIB) ../../network/url_safety.h
 	$(CC) $(CFLAGS) -I../../deps -DHAVE_ZLIB -DHAVE_7ZIP -D_7ZIP_ST -o $@ $(AGREE_SRCS) $(SAFETY_LIBS) -Wl,--wrap=malloc
+
+$(CHECK_BIN): $(CHECK_SRCS) ../../network/url_content.h
+	$(CC) $(CFLAGS) -o $@ $(CHECK_SRCS)
+
+check-link: $(CHECK_BIN)
 
 test: $(BIN) $(AGREE_BIN)
 	python3 -I ./make_archives.py --run ./$(BIN) ./$(AGREE_BIN)
@@ -241,5 +251,5 @@ tls-online-test: $(FETCH_BIN)
 	./$(FETCH_BIN) online
 
 clean:
-	rm -f $(BIN) $(FETCH_BIN) $(AGREE_BIN)
+	rm -f $(BIN) $(FETCH_BIN) $(AGREE_BIN) $(CHECK_BIN)
 	rm -rf obj-mbed obj-7z obj-win certs

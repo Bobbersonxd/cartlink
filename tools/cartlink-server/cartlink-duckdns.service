@@ -1,0 +1,21 @@
+# Copyright (C) 2026 Cartlink contributors. GNU GPL v3 or later (see COPYING).
+# Keeps {{NAME}}.duckdns.org pointed at this home's IP address.
+# Installed to /etc/systemd/system by tools/cartlink-server/setup.sh
+# ({{NAME}} filled in).
+[Unit]
+Description=Cartlink: update the DuckDNS address
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# The token file is root-only (0600); systemd hands a copy to this
+# unprivileged throwaway user as a credential.
+DynamicUser=yes
+LoadCredential=token:/srv/cartlink/duckdns.token
+ExecStart=/usr/local/lib/cartlink/duckdns-update.sh {{NAME}} %d/token
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes

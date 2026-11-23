@@ -1,0 +1,19 @@
+# Copyright (C) 2026 Cartlink contributors. GNU GPL v3 or later (see COPYING).
+# Cartlink game server site. Made by tools/cartlink-server/setup.sh from
+# Caddyfile.template; edit the template, not this file. Friends' logins are
+# in {{ROOT}}/users (change them with tools/cartlink-server/cartlink-users).
+{{DOMAIN}} {
+	{{TLS}}
+	basic_auth {
+		import {{ROOT}}/users
+	}
+	root * {{ROOT}}/games
+	file_server browse {
+		hide .*
+	}
+	log {
+		output file {{LOG}} {
+			roll_keep 5
+		}
+	}
+}
