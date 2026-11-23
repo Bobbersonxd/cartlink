@@ -121,7 +121,7 @@ read_password() {
 
 install_hint() {
 	if command -v pacman >/dev/null; then echo "sudo pacman -S caddy"
-	elif command -v apt-get >/dev/null; then echo "sudo apt install caddy"
+	elif command -v apt-get >/dev/null; then echo "install it from Caddy's own apt repository, see SETUP.md step 0; Debian's and Ubuntu's caddy is too old"
 	else echo "Cartlink's setup supports Arch and Debian/Ubuntu only"; fi
 }
 
@@ -139,12 +139,12 @@ cmd_add() { # cmd_add NAME generate|choose
 	if [[ -s $USERS && -n $(tail -c1 "$USERS") ]]; then echo >> "$USERS"; fi
 	printf '%s %s\n' "$name" "$hash" >> "$USERS" || die "could not write $USERS"
 	echo "Added $name."
-	warn_links
 	if [[ $how == generate ]]; then
 		echo "Password for $name: $PASSWORD"
 		echo "This is shown only once. Send it to $name privately; only its hash is saved."
 	fi
 	unset PASSWORD
+	warn_links # after the password is shown, so a warning can never hide it
 	reload_caddy
 }
 
@@ -165,10 +165,12 @@ cmd_remove() {
 warn_links() {
 	local links
 	[[ -d $ROOT/games && ! -L $ROOT/games ]] || return 0
-	links=$(find "$ROOT/games" -type l -print 2>/dev/null | head -n 5)
+	# awk reads everything (no early exit, so no SIGPIPE under pipefail);
+	# a find error (unreadable folder) must not stop the script either.
+	links=$(find "$ROOT/games" -type l -print 2>/dev/null | awk 'NR <= 5') || true
 	[[ -z $links ]] && return 0
 	echo "WARNING: $ROOT/games has links in it. Caddy shows what they point to to every friend:" >&2
-	printf '    %s\n' "$links" >&2
+	sed 's/^/    /' <<<"$links" >&2
 	echo "WARNING: remove them and copy the files in instead." >&2
 }
 

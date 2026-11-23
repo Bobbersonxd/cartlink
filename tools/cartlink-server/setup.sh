@@ -108,8 +108,10 @@ stock_caddyfile() { # true if the Caddyfile is still the package's sample
 	local want have verify
 	case $SYSTEM in
 	arch)
-		LC_ALL=C pacman -Qii caddy 2>/dev/null |
-			grep -Eq "(Backup Files *: *| +)$MAIN_FILE \[unmodified\]"
+		# Output first, then grep: grep -q exiting early must not make
+		# pacman die of SIGPIPE (pipefail would read that as "changed").
+		verify=$(LC_ALL=C pacman -Qii caddy 2>/dev/null) || return 1
+		grep -Eq "(Backup Files *: *| +)$MAIN_FILE \[unmodified\]" <<<"$verify"
 		;;
 	debian)
 		# Stock only if it is the package's conffile, its checksum is still
@@ -163,10 +165,12 @@ check_caddy_version() {
 warn_links() {
 	local links
 	[[ -d $ROOT/games && ! -L $ROOT/games ]] || return 0
-	links=$(find "$ROOT/games" -type l -print 2>/dev/null | head -n 5)
+	# awk reads everything (no early exit, so no SIGPIPE under pipefail);
+	# a find error (unreadable folder) must not stop the script either.
+	links=$(find "$ROOT/games" -type l -print 2>/dev/null | awk 'NR <= 5') || true
 	[[ -z $links ]] && return 0
 	warn "$ROOT/games has links in it. Caddy shows what they point to to every friend:"
-	printf '    %s\n' "$links" >&2
+	sed 's/^/    /' <<<"$links" >&2
 	warn "Remove them and copy the files in instead."
 }
 

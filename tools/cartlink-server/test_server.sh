@@ -47,7 +47,7 @@ for s in setup.sh cartlink-users cartlink-link duckdns-update.sh test_server.sh;
 	check "bash -n $s" bash -n "$HERE/$s"
 done
 
-port_busy() { ss -Hltn "sport = :$1" | grep -q .; }
+port_busy() { [[ -n $(ss -Hltn "sport = :$1") ]]; } # no early-exit pipe under pipefail
 
 if port_busy "$PORT"; then echo "port $PORT is already in use, stopping"; exit 1; fi
 ADMIN=
@@ -253,6 +253,17 @@ check "--check-layout warns about links inside games/ (and still passes)" \
 	bash -c 'CARTLINK_ROOT="$1" "$2" --check-layout 2>&1 >/dev/null | grep -q "linked-etc"' _ "$CARTLINK_ROOT" "$HERE/setup.sh"
 check "cartlink-users list warns about links inside games/" \
 	bash -c '"$1" list 2>&1 >/dev/null | grep -q "has links in it"' _ "$HERE/cartlink-users"
+# Many links: the warning must not kill the scripts (SIGPIPE under pipefail).
+mkdir -p "$CARTLINK_ROOT/games/many"
+for i in $(seq 1 3000); do ln -s /etc "$CARTLINK_ROOT/games/many/l$i"; done
+OUTM=$(users add moe 2>"$TMP/moe.err") && RCM=0 || RCM=$?
+check "add with 3000 links in games/ succeeds (rc $RCM)" [ "$RCM" = 0 ]
+check "add with 3000 links still shows the password" grep -q '^Password for moe: ' <<<"$OUTM"
+check "the warning lists 5 links, each indented" \
+	bash -c '[[ $(grep -c "^    /" "$1") == 5 && $(grep -vc "^WARNING\|^    /" "$1") == 0 ]]' _ "$TMP/moe.err"
+check "list with 3000 links succeeds" quiet users list
+check "--check-layout with 3000 links succeeds" quiet env CARTLINK_ROOT="$CARTLINK_ROOT" "$HERE/setup.sh" --check-layout
+rm -rf "$CARTLINK_ROOT/games/many"
 rm "$CARTLINK_ROOT/games/linked-etc"
 check "no warning without links" bash -c '[[ -z $("$1" list 2>&1 >/dev/null) ]]' _ "$HERE/cartlink-users"
 check "cartlink-users refuses a symlinked users file" \
