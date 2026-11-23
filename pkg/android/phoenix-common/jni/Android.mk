@@ -58,6 +58,11 @@ LOCAL_MODULE := retroarch-activity
 LOCAL_SRC_FILES  +=	$(RARCH_DIR)/griffin/griffin.c \
 							$(RARCH_DIR)/griffin/griffin_cpp.cpp
 
+# Bundled mbedTLS (HAVE_BUILTINMBEDTLS below): not in griffin.c, each
+# file is compiled on its own. Same list as Makefile.common.
+include $(LOCAL_PATH)/$(DEPS_DIR)/mbedtls/sources.mk
+LOCAL_SRC_FILES  += $(addprefix $(DEPS_DIR)/mbedtls/,$(MBEDTLS_SRCS))
+
 ifeq ($(HAVE_LOGGER), 1)
    DEFINES += -DHAVE_LOGGER
 endif
@@ -193,7 +198,8 @@ INCLUDE_DIRS     := \
 		    -I$(LOCAL_PATH)/$(DEPS_DIR)/stb/ \
 		    -I$(LOCAL_PATH)/$(DEPS_DIR)/7zip/ \
 		    -I$(LOCAL_PATH)/$(DEPS_DIR)/zstd/lib/ \
-		    -I$(LOCAL_PATH)/$(DEPS_DIR)/libFLAC/include
+		    -I$(LOCAL_PATH)/$(DEPS_DIR)/libFLAC/include \
+		    -I$(LOCAL_PATH)/$(DEPS_DIR)/mbedtls
 
 ifeq ($(HAVE_CHEEVOS),1)
 INCLUDE_DIRS += -I$(LOCAL_PATH)/$(DEPS_DIR)/rcheevos/include

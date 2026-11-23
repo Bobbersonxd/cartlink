@@ -1455,6 +1455,8 @@ static void test_https(void)
 
 /* ---------- online: real sites, system CAs ---------- */
 
+static void rm_tree(const char *dir);
+
 /* GET with verify_tls; returns the status (-1 on failure) and the
  * TLS error. */
 static int online_get(const char *u, int *tls_error)
@@ -1507,6 +1509,34 @@ static int run_online(void)
    status = online_get("https://expired.badssl.com/", &tls);
    printf("expired.badssl.com: status %d, tls_error %d\n", status, tls);
    EXPECT(tls == NET_HTTP_TLS_BAD_CERT);
+
+   /* A real homebrew release from GitHub (redirects to its file host),
+    * certificate checked on every hop, into a throwaway cache. */
+   {
+      char tmpl[] = "/tmp/url_fetch_online.XXXXXX";
+      char cache[600], path[1024], logins[600], err[512];
+      enum url_fetch_result r = URL_FETCH_FAILED;
+      struct stat st;
+      long size = -1;
+      if (mkdtemp(tmpl))
+      {
+         snprintf(logins, sizeof(logins), "%s/logins.cfg", tmpl);
+         snprintf(cache, sizeof(cache), "%s/url_cache", tmpl);
+         url_logins_set_path(logins);
+         err[0] = '\0';
+         r = url_fetch_to_cache(
+               "https://github.com/AntonioND/ucity/releases/download/v1.3/ucity.gbc",
+               cache, NULL, NULL, path, sizeof(path), NULL, 0,
+               err, sizeof(err), NULL, NULL, NULL);
+         if (r == URL_FETCH_OK && stat(path, &st) == 0)
+            size = (long)st.st_size;
+         rm_tree(tmpl);
+      }
+      printf("github release file: result %d, %ld bytes %s\n", (int)r,
+            size, err);
+      EXPECT(r == URL_FETCH_OK);
+      EXPECT(size == 131072);
+   }
 
    if (g_failures)
    {

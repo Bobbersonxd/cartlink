@@ -1,0 +1,44 @@
+Bundled TLS library: Mbed TLS 2.28.10 (last release of the 2.28 LTS line)
+
+Source:  https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-2.28.10/mbedtls-2.28.10.tar.bz2
+SHA-256: 19e5b81fdac0fe22009b9e2bdcd52d7dcafbf62bc67fc59cf0a76b5b5540d149
+         (matches the release notes and mbedtls-2.28.10-sha256sum.txt
+         on the same release page; checked 2026-11-23)
+Licence: Apache-2.0 (LICENSE in this folder; the tarball offers
+         Apache-2.0 OR GPL-2.0-or-later)
+Replaces: the mbedTLS 2.6.0 copy RetroArch shipped since 2017.
+
+Layout (what RetroArch's builds expect):
+  deps/mbedtls/*.c          library/*.c from the tarball, only the ones
+                            listed in sources.mk
+  deps/mbedtls/*.h          library/ internal headers: bignum_internal.h,
+                            common.h, constant_time_internal.h,
+                            constant_time_invasive.h, ecp_invasive.h
+  deps/mbedtls/mbedtls/*.h  include/mbedtls/*.h, all of them
+  deps/mbedtls/sources.mk   Cartlink: the one source list for
+                            Makefile.common and Android.mk
+All files are unmodified from the tarball except mbedtls/config.h.
+
+mbedtls/config.h changes from the 2.28.10 default:
+  off  MBEDTLS_SSL_TRUNCATED_HMAC      (CVE-2018-0488 class)
+  off  MBEDTLS_DEBUG_C, MBEDTLS_ERROR_C, MBEDTLS_ERROR_STRERROR_DUMMY,
+       MBEDTLS_SELF_TEST, MBEDTLS_VERSION_FEATURES
+                                       (off in RetroArch's old config too)
+  off  MBEDTLS_VERSION_C               (version.c is not built)
+  off  MBEDTLS_HKDF_C, MBEDTLS_PSA_CRYPTO_C, MBEDTLS_PSA_CRYPTO_STORAGE_C,
+       MBEDTLS_PSA_ITS_FILE_C          (new since 2.6, unused; no PSA key
+                                       files are ever written)
+  kept from RetroArch's old config: the _3DS block at the top and
+       MBEDTLS_TIMING_C off on _3DS
+  not kept: RetroArch's old config had MBEDTLS_PLATFORM_C and
+       MBEDTLS_HAVE_TIME off; 2.28 requires PLATFORM_C on Windows and
+       HAVE_TIME for HAVE_TIME_DATE (certificate dates), so both stay on.
+
+Not carried over from RetroArch's 2.6.0 copy: its console patches to
+net_sockets.c (PS3, Vita, Wii U socket calls) and its unity-build
+edits. griffin.c no longer includes these sources; Android.mk builds
+them as separate files from sources.mk.
+
+To update: download the release tarball from the official GitHub
+release page only, check its SHA-256 against the release notes, copy
+the same files, re-apply the config.h changes above, update this file.
