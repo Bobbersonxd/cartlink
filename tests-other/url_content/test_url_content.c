@@ -284,12 +284,12 @@ static void test_disposition(void)
    char out[256];
 
    EXPECT(url_content_name_from_disposition(out, sizeof(out),
-         "Content-Disposition: attachment; filename=\"Zelda.zip\""));
-   EXPECT_STR(out, "Zelda.zip");
+         "Content-Disposition: attachment; filename=\"Game.zip\""));
+   EXPECT_STR(out, "Game.zip");
 
    EXPECT(url_content_name_from_disposition(out, sizeof(out),
-         "Content-Disposition: attachment; filename*=UTF-8''Zelda%20DX.zip"));
-   EXPECT_STR(out, "Zelda DX.zip");
+         "Content-Disposition: attachment; filename*=UTF-8''Game%20DX.zip"));
+   EXPECT_STR(out, "Game DX.zip");
 
    EXPECT(url_content_name_from_disposition(out, sizeof(out),
          "content-disposition: attachment; filename=\"Old.zip\"; "
@@ -338,8 +338,8 @@ static void test_wipe(void)
 static void test_basic_auth(void)
 {
    char out[256];
-   url_content_basic_auth_header(out, sizeof(out), "bob", "pw");
-   EXPECT_STR(out, "Authorization: Basic Ym9iOnB3\r\n");
+   url_content_basic_auth_header(out, sizeof(out), "testuser", "pw");
+   EXPECT_STR(out, "Authorization: Basic dGVzdHVzZXI6cHc=\r\n");
 }
 
 static void test_archive_auth(void)
@@ -418,7 +418,7 @@ static void test_is_downloadable(void)
    EXPECT(!url_content_is_downloadable("https://x/live.m3u8"));
    EXPECT(!url_content_is_downloadable("https://x/clip.MP4?t=1"));
    EXPECT(!url_content_is_downloadable("udp://x"));
-   EXPECT(!url_content_is_downloadable("/home/a.sfc"));
+   EXPECT(!url_content_is_downloadable("/srv/a.sfc"));
    EXPECT(!url_content_is_downloadable(""));
    EXPECT(!url_content_is_downloadable(NULL));
 }
@@ -478,7 +478,7 @@ static void test_logins(void)
 
    /* Round trip, two hosts. */
    EXPECT(url_logins_set("https://example.com", "alice", "s3cret pass"));
-   EXPECT(url_logins_set("https://files.my-nas.local:8443", "bob", "hunter2"));
+   EXPECT(url_logins_set("https://files.my-nas.local:8443", "testuser", "hunter2"));
    EXPECT(file_exists(path));
 #ifndef _WIN32
    /* Windows has no POSIX file modes; url_logins skips them there. */
@@ -492,7 +492,7 @@ static void test_logins(void)
    EXPECT_STR(pass, "s3cret pass");
    EXPECT(url_logins_get("https://files.my-nas.local:8443", user, sizeof(user),
          pass, sizeof(pass)));
-   EXPECT_STR(user, "bob");
+   EXPECT_STR(user, "testuser");
    EXPECT_STR(pass, "hunter2");
 
    /* Key format: the origin, scheme://host[:port], default port left
@@ -536,7 +536,7 @@ static void test_logins(void)
    EXPECT_STR(pass, "new");
    EXPECT(url_logins_get("https://files.my-nas.local:8443", user, sizeof(user),
          pass, sizeof(pass)));
-   EXPECT_STR(user, "bob");
+   EXPECT_STR(user, "testuser");
 
    /* Unknown host. */
    EXPECT(!url_logins_get("https://unknown.org", user, sizeof(user),
@@ -628,8 +628,8 @@ static void test_form_encode(void)
 {
    char out[64];
 
-   EXPECT(url_content_form_encode(out, sizeof(out), "bob@example.com"));
-   EXPECT_STR(out, "bob%40example.com");
+   EXPECT(url_content_form_encode(out, sizeof(out), "user@example.com"));
+   EXPECT_STR(out, "user%40example.com");
    EXPECT(url_content_form_encode(out, sizeof(out), "a b&c=d+e/~_.-"));
    EXPECT_STR(out, "a+b%26c%3Dd%2Be%2F~_.-");
    EXPECT(url_content_form_encode(out, sizeof(out), "\xc3\xa9"));
@@ -653,9 +653,9 @@ static void test_archive_login_parse(void)
    char err[128];
    const char *ok =
       "{\"success\": true, \"values\": {\"cookies\": {\"logged-in-sig\": \"x\","
-      " \"logged-in-user\": \"bob%40example.com\"}, \"email\": \"bob@example.com\","
-      " \"itemname\": \"@bob\", \"s3\": {\"access\": \"AKEY123\","
-      " \"secret\": \"SKEY456\"}, \"screenname\": \"bob\"}, \"version\": 1}";
+      " \"logged-in-user\": \"user%40example.com\"}, \"email\": \"user@example.com\","
+      " \"itemname\": \"@testuser\", \"s3\": {\"access\": \"AKEY123\","
+      " \"secret\": \"SKEY456\"}, \"screenname\": \"testuser\"}, \"version\": 1}";
    /* s3 before success, and noise with arrays and nested objects. */
    const char *ok_reordered =
       "{\"values\": {\"list\": [{\"s3\": {\"access\": \"WRONG\"}}, \"s3\"],"
@@ -672,7 +672,7 @@ static void test_archive_login_parse(void)
    const char *error_only =
       "{\"success\": false, \"error\": \"Missing email\"}";
    const char *no_s3 =
-      "{\"success\": true, \"values\": {\"email\": \"bob@example.com\"}}";
+      "{\"success\": true, \"values\": {\"email\": \"user@example.com\"}}";
    const char *s3_top_level =
       "{\"success\": true, \"s3\": {\"access\": \"A\", \"secret\": \"S\"}}";
    const char *success_string =
@@ -1270,10 +1270,10 @@ static void test_logins_windows_replace(void)
    url_logins_set_path(path);
    rename_seam_reset(true, 0);
    EXPECT(url_logins_set("https://a.example", "alice", "pw1"));
-   EXPECT(url_logins_set("https://b.example", "bob", "pw2"));
+   EXPECT(url_logins_set("https://b.example", "testuser", "pw2"));
    EXPECT(url_logins_get("https://a.example", user, sizeof(user), pass, sizeof(pass)));
    EXPECT(url_logins_get("https://b.example", user, sizeof(user), pass, sizeof(pass)));
-   EXPECT_STR(user, "bob");
+   EXPECT_STR(user, "testuser");
 
    /* Second rename held: the old file is put back. */
    rename_seam_reset(true, 1u << 2);
@@ -1970,7 +1970,7 @@ static void test_logins_legacy(void)
    {
       fputs("url_login_example_com_user = \"alice\"\n"
             "url_login_example_com_pass = \"pw1\"\n"
-            "url_login_nas_local_user = \"bob\"\n"
+            "url_login_nas_local_user = \"testuser\"\n"
             "url_login_nas_local_pass = \"pw2\"\n"
             "url_login_127_0_0_1_user = \"carol\"\n"
             "url_login_127_0_0_1_pass = \"pw3\"\n"
@@ -2004,7 +2004,7 @@ static void test_logins_legacy(void)
    EXPECT(url_logins_migrate("https://nas.local"));
    EXPECT(url_logins_get("https://nas.local", user, sizeof(user),
          pass, sizeof(pass)));
-   EXPECT_STR(user, "bob");
+   EXPECT_STR(user, "testuser");
    EXPECT_STR(pass, "pw2");
    /* Nothing to migrate: fine, nothing changes. */
    EXPECT(url_logins_migrate("https://unknown.example"));

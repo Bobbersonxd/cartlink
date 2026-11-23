@@ -280,9 +280,9 @@ PS=$(make_profile saved)
 # A login saved for the https site on that host and port (or by an
 # older build for the bare host) is never sent over plain http.
 cat > "$PS/url_logins.cfg" <<EOF
-url_login_https://127.0.0.1:${AUTH_PORT}_user = "bob"
+url_login_https://127.0.0.1:${AUTH_PORT}_user = "testuser"
 url_login_https://127.0.0.1:${AUTH_PORT}_pass = "pw"
-url_login_127_0_0_1_user = "bob"
+url_login_127_0_0_1_user = "testuser"
 url_login_127_0_0_1_pass = "pw"
 EOF
 chmod 600 "$PS/url_logins.cfg"
@@ -315,9 +315,9 @@ if [ -n "$SYS_CA" ] && [ -f "$CERTS/ca.pem" ] \
    PH=$(make_profile https-saved)
    PO=$(make_profile https-old)
    PP=$(make_profile https-port)
-   printf '%s\n' 'url_login_https://localhost:8443_user = "bob"' \
+   printf '%s\n' 'url_login_https://localhost:8443_user = "testuser"' \
       'url_login_https://localhost:8443_pass = "pw"' > "$PH/url_logins.cfg"
-   printf '%s\n' 'url_login_localhost_user = "bob"' \
+   printf '%s\n' 'url_login_localhost_user = "testuser"' \
       'url_login_localhost_pass = "pw"' \
       'url_login_archive_access = "AK"' \
       'url_login_archive_secret = "SK"' > "$PO/url_logins.cfg"
@@ -370,7 +370,7 @@ INNER
    fi
    cached=$(ls "$PO/assets/url_cache/"*_game.sfc 2>/dev/null | head -n 1)
    if [ -n "$cached" ] && [ "$(wc -c < "$cached")" -eq 8192 ] \
-         && grep -q '^url_login_https://localhost_user = "bob"' "$PO/url_logins.cfg" \
+         && grep -q '^url_login_https://localhost_user = "testuser"' "$PO/url_logins.cfg" \
          && ! grep -q '^url_login_localhost_' "$PO/url_logins.cfg" \
          && grep -q '^url_login_archive_access = "AK"' "$PO/url_logins.cfg" \
          && [ "$(stat -c %a "$PO/url_logins.cfg")" = 600 ]; then

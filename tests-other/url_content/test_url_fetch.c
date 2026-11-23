@@ -354,7 +354,7 @@ static void test_basic(void)
    /* A typed login is refused the same way: the 401's Basic challenge
     * is not answered. */
    url(u, sizeof(u), "/basic/game.sfc");
-   r = url_fetch_to_cache(u, cache, "bob", "pw", out, sizeof(out),
+   r = url_fetch_to_cache(u, cache, "testuser", "pw", out, sizeof(out),
          ch, sizeof(ch), err, sizeof(err), NULL, NULL, NULL);
    EXPECT(r == URL_FETCH_LOGIN_HTTP);
    EXPECT_STR(err, LOGIN_HTTP_MSG);
@@ -370,7 +370,7 @@ static void test_saved_login(void)
    auth_log();
    /* Saved for the https site on the same host and port: not for http. */
    snprintf(site, sizeof(site), "https://127.0.0.1:%d", g_port);
-   EXPECT(url_logins_set(site, "bob", "pw"));
+   EXPECT(url_logins_set(site, "testuser", "pw"));
    r = fetch("/basic/game.sfc", cache, NULL, NULL, out, sizeof(out),
          NULL, 0);
    EXPECT(r == URL_FETCH_LOGIN_HTTP);
@@ -378,7 +378,7 @@ static void test_saved_login(void)
    EXPECT(url_logins_forget_all());
 
    /* A login saved by an older build (host only) is no different. */
-   write_legacy_logins("127_0_0_1", "bob", "pw");
+   write_legacy_logins("127_0_0_1", "testuser", "pw");
    r = fetch("/basic/game.sfc", cache, NULL, NULL, out, sizeof(out),
          NULL, 0);
    EXPECT(r == URL_FETCH_LOGIN_HTTP);
@@ -400,7 +400,7 @@ static void test_digest(void)
    r = fetch("/digest/game.sfc", cache, NULL, NULL, out, sizeof(out),
          ch, sizeof(ch));
    EXPECT(r == URL_FETCH_LOGIN_HTTP);
-   r = fetch("/digest/game.sfc", cache, "bob", "pw", out, sizeof(out),
+   r = fetch("/digest/game.sfc", cache, "testuser", "pw", out, sizeof(out),
          ch, sizeof(ch));
    EXPECT(r == URL_FETCH_LOGIN_HTTP);
    EXPECT(count_files(cache, NULL, 0, NULL) == 0);
@@ -627,25 +627,25 @@ static void test_redirect_auth(void)
 
    /* Plain http, no 401: the login is never sent. */
    new_cache(cache, sizeof(cache), "echo");
-   r = fetch("/echoauth", cache, "bob", "pw", out, sizeof(out), NULL, 0);
+   r = fetch("/echoauth", cache, "testuser", "pw", out, sizeof(out), NULL, 0);
    EXPECT(r == URL_FETCH_OK);
    EXPECT(file_is_text(out, "none"));
 
    /* Same host asking for it over http: still nothing sent. */
    new_cache(cache, sizeof(cache), "basicecho");
-   r = fetch("/basicecho", cache, "bob", "pw", out, sizeof(out), NULL, 0);
+   r = fetch("/basicecho", cache, "testuser", "pw", out, sizeof(out), NULL, 0);
    EXPECT(r == URL_FETCH_LOGIN_HTTP);
    EXPECT(count_files(cache, NULL, 0, NULL) == 0);
 
    /* 127.0.0.1 -> 127.0.0.2: no Authorization is sent. */
    new_cache(cache, sizeof(cache), "xhost");
-   r = fetch("/xhost", cache, "bob", "pw", out, sizeof(out), NULL, 0);
+   r = fetch("/xhost", cache, "testuser", "pw", out, sizeof(out), NULL, 0);
    EXPECT(r == URL_FETCH_OK);
    EXPECT(file_is_text(out, "none"));
 
    /* Saved logins do not cross hosts either. */
    new_cache(cache, sizeof(cache), "xhost-saved");
-   write_legacy_logins("127_0_0_1", "bob", "pw");
+   write_legacy_logins("127_0_0_1", "testuser", "pw");
    r = fetch("/xhost", cache, NULL, NULL, out, sizeof(out), NULL, 0);
    EXPECT(r == URL_FETCH_OK);
    EXPECT(file_is_text(out, "none"));
@@ -653,7 +653,7 @@ static void test_redirect_auth(void)
 
    /* Same-host redirect to a page that asks: LOGIN_HTTP. */
    new_cache(cache, sizeof(cache), "samehost");
-   r = fetch("/samehost", cache, "bob", "pw", out, sizeof(out), NULL, 0);
+   r = fetch("/samehost", cache, "testuser", "pw", out, sizeof(out), NULL, 0);
    EXPECT(r == URL_FETCH_LOGIN_HTTP);
 }
 
@@ -907,7 +907,7 @@ static void test_fetch_catalog_login(void)
    EXPECT(cat.count == 0);
    url_catalog_free(&cat);
    memset(&cat, 0, sizeof(cat));
-   r = fetch_cat(u, cache, "bob", "pw", out, sizeof(out), err, sizeof(err),
+   r = fetch_cat(u, cache, "testuser", "pw", out, sizeof(out), err, sizeof(err),
          &cat);
    EXPECT(r == URL_FETCH_LOGIN_HTTP);
    EXPECT(cat.count == 0);
@@ -1112,13 +1112,13 @@ static void test_https_cert(void)
    /* With a login: never, even with the flag; the login is not sent. */
    auth_log();
    new_cache(cache, sizeof(cache), "https-cert-login");
-   r = fetch_s_any("localhost", "/basic/game.sfc", cache, "bob", "pw",
+   r = fetch_s_any("localhost", "/basic/game.sfc", cache, "testuser", "pw",
          out, sizeof(out), err, sizeof(err), NULL, true);
    EXPECT(r == URL_FETCH_FAILED);
    EXPECT_STR(err, "This site's security certificate is not valid, so the login was not sent.");
    EXPECT(count_files(cache, NULL, 0, NULL) == 0);
    EXPECT_STR(auth_log(), "empty");
-   EXPECT(url_logins_set(g_site, "bob", "pw"));
+   EXPECT(url_logins_set(g_site, "testuser", "pw"));
    r = fetch_s_any("localhost", "/basic/game.sfc", cache, NULL, NULL,
          out, sizeof(out), err, sizeof(err), NULL, true);
    EXPECT(r == URL_FETCH_FAILED);
@@ -1155,7 +1155,7 @@ static void test_https_cert(void)
    url_catalog_free(&cat);
    /* Fingerprint + login over a bad certificate: still refused. */
    r = fetch_s("localhost", "/basic/game.sfc#sha256=" GAME_FP, cache,
-         "bob", "pw", out, sizeof(out), err, sizeof(err));
+         "testuser", "pw", out, sizeof(out), err, sizeof(err));
    EXPECT(r == URL_FETCH_FAILED);
    EXPECT_STR(auth_log(), "empty");
 
@@ -1195,7 +1195,7 @@ static void test_https_cert(void)
    /* ... but never for a download that uses a (saved) login, even on
     * the hop that carries none. */
    new_cache(cache, sizeof(cache), "https-cert-hop-login");
-   EXPECT(url_logins_set(g_site, "bob", "pw"));
+   EXPECT(url_logins_set(g_site, "testuser", "pw"));
    r = fetch_s("localhost", "/xhost-s", cache, NULL, NULL,
          out, sizeof(out), err, sizeof(err));
    EXPECT(r == URL_FETCH_FAILED);
@@ -1224,7 +1224,7 @@ static void test_https_logins(void)
    new_cache(cache, sizeof(cache), "hl-typed");
    snprintf(u, sizeof(u), "%s/basic/game.sfc", g_site);
    origin[0] = 'x';
-   r = url_fetch_to_cache_ex(u, cache, "bob", "pw", out, sizeof(out),
+   r = url_fetch_to_cache_ex(u, cache, "testuser", "pw", out, sizeof(out),
          NULL, 0, err, sizeof(err), NULL, NULL, NULL, false,
          origin, sizeof(origin));
    EXPECT(r == URL_FETCH_OK);
@@ -1241,7 +1241,7 @@ static void test_https_logins(void)
    EXPECT_STR(origin, "");
 
    /* Saved for this exact site: used. */
-   EXPECT(url_logins_set(g_site, "bob", "pw"));
+   EXPECT(url_logins_set(g_site, "testuser", "pw"));
    new_cache(cache, sizeof(cache), "hl-saved");
    r = fetch_s("localhost", "/basic/game.sfc", cache, NULL, NULL,
          out, sizeof(out), err, sizeof(err));
@@ -1274,7 +1274,7 @@ static void test_https_logins(void)
    EXPECT(url_logins_forget_all());
 
    /* Saved for https://localhost (port 443): not this port. */
-   EXPECT(url_logins_set("https://localhost", "bob", "pw"));
+   EXPECT(url_logins_set("https://localhost", "testuser", "pw"));
    new_cache(cache, sizeof(cache), "hl-port");
    snprintf(u, sizeof(u), "%s/basic/game.sfc", g_site);
    r = url_fetch_to_cache(u, cache, NULL, NULL, out, sizeof(out),
@@ -1285,7 +1285,7 @@ static void test_https_logins(void)
    EXPECT(url_logins_forget_all());
 
    /* An old host-only entry means https://localhost (port 443) too. */
-   write_legacy_logins("localhost", "bob", "pw");
+   write_legacy_logins("localhost", "testuser", "pw");
    r = url_fetch_to_cache(u, cache, NULL, NULL, out, sizeof(out),
          ch, sizeof(ch), err, sizeof(err), NULL, NULL, NULL);
    EXPECT(r == URL_FETCH_NEED_LOGIN);
@@ -1297,14 +1297,14 @@ static void test_https_logins(void)
    new_cache(cache, sizeof(cache), "hl-upgrade");
    snprintf(u, sizeof(u), "http://localhost:%d/tohttps", g_port);
    origin[0] = 'x';
-   r = url_fetch_to_cache_ex(u, cache, "bob", "pw", out, sizeof(out),
+   r = url_fetch_to_cache_ex(u, cache, "testuser", "pw", out, sizeof(out),
          NULL, 0, err, sizeof(err), NULL, NULL, NULL, false,
          origin, sizeof(origin));
    EXPECT(r == URL_FETCH_OK);
    EXPECT(file_is_game(out));
    EXPECT_STR(origin, g_site);
    EXPECT_STR(auth_log(), "Basic");
-   EXPECT(url_logins_set(g_site, "bob", "pw"));
+   EXPECT(url_logins_set(g_site, "testuser", "pw"));
    new_cache(cache, sizeof(cache), "hl-upgrade-saved");
    r = url_fetch_to_cache(u, cache, NULL, NULL, out, sizeof(out),
          NULL, 0, err, sizeof(err), NULL, NULL, NULL);
@@ -1313,7 +1313,7 @@ static void test_https_logins(void)
    /* ... but not when the http link was on another host. */
    new_cache(cache, sizeof(cache), "hl-upgrade-xhost");
    snprintf(u, sizeof(u), "http://127.0.0.1:%d/tohttps", g_port);
-   r = url_fetch_to_cache(u, cache, "bob", "pw", out, sizeof(out),
+   r = url_fetch_to_cache(u, cache, "testuser", "pw", out, sizeof(out),
          NULL, 0, err, sizeof(err), NULL, NULL, NULL);
    EXPECT(r == URL_FETCH_NEED_LOGIN);
    EXPECT_STR(auth_log(), "none");
@@ -1322,11 +1322,11 @@ static void test_https_logins(void)
    /* Same host, another https port: another site, no login (typed or
     * saved) goes there. */
    new_cache(cache, sizeof(cache), "hl-toport");
-   r = fetch_s("localhost", "/toport", cache, "bob", "pw",
+   r = fetch_s("localhost", "/toport", cache, "testuser", "pw",
          out, sizeof(out), err, sizeof(err));
    EXPECT(r == URL_FETCH_NEED_LOGIN);
    EXPECT_STR(auth_log(), "none");
-   EXPECT(url_logins_set(g_site, "bob", "pw"));
+   EXPECT(url_logins_set(g_site, "testuser", "pw"));
    r = fetch_s("localhost", "/toport", cache, NULL, NULL,
          out, sizeof(out), err, sizeof(err));
    EXPECT(r == URL_FETCH_NEED_LOGIN);
@@ -1336,7 +1336,7 @@ static void test_https_logins(void)
 
    /* https moved down to plain http that asks: LOGIN_HTTP, nothing sent. */
    new_cache(cache, sizeof(cache), "hl-down");
-   r = fetch_s("localhost", "/tohttp", cache, "bob", "pw",
+   r = fetch_s("localhost", "/tohttp", cache, "testuser", "pw",
          out, sizeof(out), err, sizeof(err));
    EXPECT(r == URL_FETCH_LOGIN_HTTP);
    EXPECT_STR(err, LOGIN_HTTP_MSG);
@@ -1360,7 +1360,7 @@ static void test_https(void)
 
    auth_log();
    new_cache(cache, sizeof(cache), "https-untrusted");
-   r = fetch_s("localhost", "/basic/game.sfc", cache, "bob", "pw",
+   r = fetch_s("localhost", "/basic/game.sfc", cache, "testuser", "pw",
          out, sizeof(out), err, sizeof(err));
    EXPECT(r == URL_FETCH_FAILED);
    EXPECT_STR(err, bad);
@@ -1368,7 +1368,7 @@ static void test_https(void)
    EXPECT_STR(auth_log(), "empty");
 
    /* Saved login: same. */
-   EXPECT(url_logins_set(g_site, "bob", "pw"));
+   EXPECT(url_logins_set(g_site, "testuser", "pw"));
    r = fetch_s("localhost", "/basic/game.sfc", cache, NULL, NULL,
          out, sizeof(out), err, sizeof(err));
    EXPECT(r == URL_FETCH_FAILED);
@@ -1379,7 +1379,7 @@ static void test_https(void)
    /* No CA certificates at all: a clear refusal. */
    ssl_socket_set_ca_bundle_override("/nonexistent/ca.pem");
    new_cache(cache, sizeof(cache), "https-noca");
-   r = fetch_s("localhost", "/basic/game.sfc", cache, "bob", "pw",
+   r = fetch_s("localhost", "/basic/game.sfc", cache, "testuser", "pw",
          out, sizeof(out), err, sizeof(err));
    EXPECT(r == URL_FETCH_FAILED);
    EXPECT_STR(err, noca);
@@ -1389,14 +1389,14 @@ static void test_https(void)
     * over https), but only for the name on the certificate. */
    ssl_socket_set_ca_bundle_override(g_ca);
    new_cache(cache, sizeof(cache), "https-trusted");
-   r = fetch_s("localhost", "/basic/game.sfc", cache, "bob", "pw",
+   r = fetch_s("localhost", "/basic/game.sfc", cache, "testuser", "pw",
          out, sizeof(out), err, sizeof(err));
    EXPECT(r == URL_FETCH_OK);
    EXPECT(file_is_game(out));
    EXPECT_STR(auth_log(), "Basic");
 
    new_cache(cache, sizeof(cache), "https-wrongname");
-   r = fetch_s("127.0.0.1", "/basic/game.sfc", cache, "bob", "pw",
+   r = fetch_s("127.0.0.1", "/basic/game.sfc", cache, "testuser", "pw",
          out, sizeof(out), err, sizeof(err));
    EXPECT(r == URL_FETCH_FAILED);
    EXPECT_STR(err, bad);
@@ -1404,7 +1404,7 @@ static void test_https(void)
 
    /* Digest over https: Basic first, then the Digest answer. */
    new_cache(cache, sizeof(cache), "https-digest");
-   r = fetch_s("localhost", "/digest/game.sfc", cache, "bob", "pw",
+   r = fetch_s("localhost", "/digest/game.sfc", cache, "testuser", "pw",
          out, sizeof(out), err, sizeof(err));
    EXPECT(r == URL_FETCH_OK);
    EXPECT_STR(auth_log(), "Basic,Digest");
@@ -1437,14 +1437,14 @@ static void test_https(void)
       snprintf(u, sizeof(u), "https://localhost:%d/xauthn/?op=login",
             g_sport);
       url_archive_org_set_test_url(u);
-      EXPECT(!url_archive_org_login("bob+ia@example.com", "p&ss w=rd",
+      EXPECT(!url_archive_org_login("user@example.com", "p&ss w=rd",
             a, sizeof(a), s, sizeof(s), err, sizeof(err)));
       EXPECT_STR(err, "archive.org's security certificate is not valid, so the password was not sent");
       EXPECT(get_text("/xauthn/count", cnt, sizeof(cnt))
             && atoi(cnt) == before);
 
       ssl_socket_set_ca_bundle_override(g_ca);
-      EXPECT(url_archive_org_login("bob+ia@example.com", "p&ss w=rd",
+      EXPECT(url_archive_org_login("user@example.com", "p&ss w=rd",
             a, sizeof(a), s, sizeof(s), err, sizeof(err)));
       EXPECT_STR(a, "ACCESSKEY");
       url_archive_org_set_test_url(NULL);
@@ -1594,7 +1594,7 @@ static void test_archive_login(void)
    url_archive_org_set_test_url(u);
 
    /* Wrong password: refused, nothing saved. */
-   EXPECT(!url_archive_org_login("bob+ia@example.com", "nope",
+   EXPECT(!url_archive_org_login("user@example.com", "nope",
          access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
    EXPECT_STR(err, "wrong email or password");
    EXPECT(!url_logins_get_archive_keys(a2, sizeof(a2), s2, sizeof(s2)));
@@ -1604,7 +1604,7 @@ static void test_archive_login(void)
    EXPECT_STR(err, "no account with that email");
 
    /* An error status with archive.org's JSON reason: the reason wins. */
-   EXPECT(!url_archive_org_login("bob401@example.com", "nope",
+   EXPECT(!url_archive_org_login("user401@example.com", "nope",
          access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
    EXPECT_STR(err, "wrong email or password");
    EXPECT(!url_archive_org_login("html401@example.com", "nope",
@@ -1624,7 +1624,7 @@ static void test_archive_login(void)
 
    /* Right login (form-encoding needed for '+', '&', ' ', '='):
     * keys come back and are saved. */
-   EXPECT(url_archive_org_login("bob+ia@example.com", "p&ss w=rd",
+   EXPECT(url_archive_org_login("user@example.com", "p&ss w=rd",
          access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
    EXPECT_STR(access, "ACCESSKEY");
    EXPECT_STR(secret, "SECRETKEY");
@@ -1639,7 +1639,7 @@ static void test_archive_login(void)
    EXPECT(posts_before > 0);
    url(u, sizeof(u), "/xauthn/redirect?op=login");
    url_archive_org_set_test_url(u);
-   EXPECT(!url_archive_org_login("bob+ia@example.com", "p&ss w=rd",
+   EXPECT(!url_archive_org_login("user@example.com", "p&ss w=rd",
          access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
    EXPECT_STR(err, "server answered 302");
    EXPECT_STR(access, "");
@@ -1647,7 +1647,7 @@ static void test_archive_login(void)
 
    /* Nothing listening: a clean failure. */
    url_archive_org_set_test_url("http://127.0.0.1:1/xauthn/?op=login");
-   EXPECT(!url_archive_org_login("bob+ia@example.com", "p&ss w=rd",
+   EXPECT(!url_archive_org_login("user@example.com", "p&ss w=rd",
          access, sizeof(access), secret, sizeof(secret), err, sizeof(err)));
    EXPECT(err[0] != '\0');
 

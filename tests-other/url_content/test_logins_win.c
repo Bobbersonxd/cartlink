@@ -212,13 +212,13 @@ int main(int argc, char **argv)
 
    /* An older build's plain file (no marker, host-only keys): read as
     * is, then sealed as a whole on the next save. */
-   put(path, "url_login_nas_local_user = \"bob\"\n"
+   put(path, "url_login_nas_local_user = \"testuser\"\n"
          "url_login_nas_local_pass = \"hunter2\"\n"
          "url_login_archive_access = \"OLDA\"\n"
          "url_login_archive_secret = \"OLDS\"\n");
    EXPECT(url_logins_get("https://nas.local", user, sizeof(user),
          pass, sizeof(pass)));
-   EXPECT_STR(user, "bob");
+   EXPECT_STR(user, "testuser");
    EXPECT_STR(pass, "hunter2");
    EXPECT(url_logins_set("https://other.example", "dave", "pw4"));
    t = slurp(path);

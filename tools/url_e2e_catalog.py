@@ -309,11 +309,11 @@ cache_directory = "%s/cache"
         type_line(base + "/basic/cat/")
         time.sleep(1.5)
         snap("catalog-11-login-prompt")
-        type_line("bob")
+        type_line("testuser")
         type_line("pw")
         time.sleep(1.5)
         logins = work + "/url_logins.cfg"
-        check(os.path.exists(logins) and "bob" in open(logins).read(),
+        check(os.path.exists(logins) and "testuser" in open(logins).read(),
               "login typed for a list saved to url_logins.cfg")
         snap("catalog-12-login-list")
         cmd("MENU_B", 3)

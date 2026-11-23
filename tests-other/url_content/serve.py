@@ -15,7 +15,7 @@ import time
 
 GAME = bytes((i * 7 + 3) & 0xFF for i in range(8192))
 PAGE = b"<!DOCTYPE html>\n<html><body>Sign in</body></html>\n"
-USER = "bob"
+USER = "testuser"
 PASS = "pw"
 REALM = "retro"
 NONCE = "dcd98b7102dd2f0e8b11d0f600bfb0c093"
@@ -180,19 +180,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         form = urllib.parse.parse_qs(body, keep_blank_values=True)
         email = form.get("email", [""])[0]
         password = form.get("password", [""])[0]
-        if email == "bob+ia@example.com" and password == "p&ss w=rd":
+        if email == "user@example.com" and password == "p&ss w=rd":
             reply = {"success": True, "values": {
-                "email": email, "screenname": "bob",
+                "email": email, "screenname": "testuser",
                 "s3": {"access": "ACCESSKEY", "secret": "SECRETKEY"}},
                 "version": 1}
-        elif email == "bob+ia@example.com":
+        elif email == "user@example.com":
             reply = {"success": False,
                      "values": {"reason": "account_bad_password"},
                      "version": 1}
         elif email == "page@example.com":
             self.send_body(200, PAGE, "text/html")
             return
-        elif email == "bob401@example.com":
+        elif email == "user401@example.com":
             # archive.org's way: an error status with a JSON reason.
             self.send_body(401, json.dumps({
                 "success": False,
