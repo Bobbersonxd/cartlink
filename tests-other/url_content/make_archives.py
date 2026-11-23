@@ -60,6 +60,21 @@ def gb_rom():
 
 
 ELF = b"\x7fELF\x02\x01\x01" + bytes(57)
+
+
+def ne_exe():
+    # Win16 "NE" executable: MZ stub, "NE" at e_lfanew (not PE).
+    b = bytearray(1024)
+    b[0:2] = b"MZ"
+    struct.pack_into("<I", b, 0x3C, 0x80)
+    b[0x80:0x82] = b"NE"
+    return bytes(b)
+
+
+def dos_sys():
+    # DOS device driver header: next-driver pointer FFFF:FFFF.
+    return b"\xff\xff\xff\xff\x00\x80" + bytes(250)
+
 BAT = b"@echo off\r\nGAME.EXE\r\n"
 
 
@@ -127,6 +142,13 @@ def main():
                                  ("SETUP.COM", b"\xb4\x09\xcd\x21"),
                                  ("BIG.EXE", dos_exe_far()),
                                  ("DATA.DAT", gb)])
+    dos_world = [("GAME.EXE", dos_exe()), ("SETUP.PIF", bytes(545)),
+                 ("MOUSE.SYS", dos_sys()), ("SOUND.DRV", ne_exe()),
+                 ("WIN16.EXE", ne_exe())]
+    write_zip(j("dos_world.zip"), dos_world)
+    write_zip(j("dos_world_pe.zip"), dos_world + [("WIN.DLL", pe_exe())])
+    write_zip(j("vbs_member.zip"), [("game.gb", gb),
+                                    ("run.vbs", b'MsgBox "hi"\r\n')])
     write_zip(j("slip_dotdot.zip"), [("../x.gb", gb)])
     write_zip(j("slip_abs.zip"), [("/abs.gb", gb)])
     write_zip(j("slip_drive.zip"), [("C:\\x.gb", gb)])

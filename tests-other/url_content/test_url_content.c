@@ -1680,6 +1680,11 @@ static void test_safety_archive_zip(void)
    EXPECT_FIX("many_ok.zip", URL_SAFE_OK);
    EXPECT_FIX("tiny_ratio.zip", URL_SAFE_OK);
    EXPECT_FIX("exactly2g.zip", URL_SAFE_OK);
+   /* Ruling R2: DOS-world names are judged by their bytes. */
+   EXPECT_FIX("dos_world.zip", URL_SAFE_OK);
+   EXPECT_FIX("app_member.zip", URL_SAFE_OK);  /* harmless bytes */
+   EXPECT_FIX("dos_world_pe.zip", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("vbs_member.zip", URL_SAFE_ARCHIVE_TRAP);
 
    EXPECT_FIX("slip_dotdot.zip", URL_SAFE_ARCHIVE_TRAP);
    EXPECT_FIX("slip_abs.zip", URL_SAFE_ARCHIVE_TRAP);
@@ -1691,7 +1696,6 @@ static void test_safety_archive_zip(void)
    EXPECT_FIX("pe_far.zip", URL_SAFE_ARCHIVE_TRAP);
    EXPECT_FIX("elf_member.zip", URL_SAFE_ARCHIVE_TRAP);
    EXPECT_FIX("lnk_member.zip", URL_SAFE_ARCHIVE_TRAP);
-   EXPECT_FIX("app_member.zip", URL_SAFE_ARCHIVE_TRAP);
    EXPECT_FIX("script_member.zip", URL_SAFE_ARCHIVE_TRAP);
    EXPECT_FIX("bomb.zip", URL_SAFE_ARCHIVE_TRAP);
    EXPECT_FIX("many.zip", URL_SAFE_ARCHIVE_TRAP);

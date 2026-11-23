@@ -18,7 +18,8 @@
  * programs, use unsafe paths or unpack to too much. Ruling: plain DOS
  * executables (MZ without a PE header) and .com/.bat files are fine
  * as members of an archive (DOS cores run them), never as a bare
- * download. Nothing here extracts an archive. */
+ * download; inside archives other names (.pif, .sys, .dll, ...) are
+ * judged by their bytes too (Ruling R2). Nothing here extracts an archive. */
 
 #ifndef __RARCH_URL_SAFETY_H
 #define __RARCH_URL_SAFETY_H
@@ -61,9 +62,11 @@ enum url_safety_verdict url_safety_check_file(const char *name,
 /* Opens a .zip/.7z on disk (by its extension; anything else is OK)
  * and checks every member from the archive's headers before
  * RetroArch extracts it: unsafe paths (absolute, "..", drive letters,
- * backslash traversal), program members (by name, and by first bytes
- * where they can be read), more than 10,000 members, a member over
- * 1000:1 compression, more than 2 GiB in total. */
+ * backslash traversal), members whose bytes are PE, ELF, Mach-O,
+ * script, shortcut or OLE (DOS MZ and Win16 NE are fine), members with
+ * a script/shortcut/installer name (ps1, vbs, js, hta, lnk, url, reg,
+ * msi, jar, desktop, sh, ...: Ruling R2), more than 10,000 members, a
+ * member over 1000:1 compression, more than 2 GiB in total. */
 enum url_safety_verdict url_safety_check_archive(const char *path);
 
 /* Windows: writes the Zone.Identifier stream (ZoneId=3 + HostUrl,

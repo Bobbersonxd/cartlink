@@ -111,7 +111,7 @@ static bool us_ext_is_program(const char *ext)
    return us_ext_in(ext, us_program_exts);
 }
 
-/* DOS programs: fine inside an archive (Ruling R1). */
+/* DOS programs: refused as a bare download when their bytes are MZ. */
 static bool us_ext_is_dos(const char *ext)
 {
    return     string_is_equal(ext, "exe")
@@ -119,11 +119,19 @@ static bool us_ext_is_dos(const char *ext)
            || string_is_equal(ext, "bat");
 }
 
-/* DOS programs that start with an MZ header to look at. */
-static bool us_ext_is_dos_binary(const char *ext)
-{
-   return string_is_equal(ext, "exe") || string_is_equal(ext, "com");
-}
+/* Ruling R2: inside an archive, members are judged by content, plus
+ * these script/shortcut/installer names whatever their bytes. */
+static const char *const us_archive_block_exts[] = {
+   "ps1", "psm1", "vbs", "vbe", "js", "jse", "wsf", "wsh", "hta", "lnk",
+   "url", "reg", "scf", "msi", "msp", "jar", "desktop", "appimage",
+   "command", "sh", "bash", NULL
+};
+
+/* Names Windows/DOS run as binaries: if their bytes can't be read,
+ * the member is refused (it might be a PE). */
+static const char *const us_mz_exts[] = {
+   "exe", "com", "dll", "sys", "drv", "ovl", "pif", "scr", "cpl", NULL
+};
 
 /* ---------- bytes ---------- */
 
@@ -230,7 +238,8 @@ struct us_member
 };
 
 /* Checks one member name (any bytes, length n). TRAP for unsafe
- * paths and program types other than DOS ones. */
+ * paths and the script/shortcut names of Ruling R2; everything else
+ * (DOS-world .exe/.com/.bat/.pif/.sys/.dll/...) is judged by content. */
 static enum url_safety_verdict us_check_member_name(const char *name,
       size_t n, struct us_member *m)
 {
@@ -276,12 +285,10 @@ static enum url_safety_verdict us_check_member_name(const char *name,
             if (i == n && !m->is_dir)
             {
                strlcpy(m->ext, ext, sizeof(m->ext));
-               if (us_ext_is_program(ext) && !us_ext_is_dos(ext))
+               if (us_ext_in(ext, us_archive_block_exts))
                   return URL_SAFE_ARCHIVE_TRAP;
-               m->dos_binary = us_ext_is_dos_binary(ext);
+               m->dos_binary = us_ext_in(ext, us_mz_exts);
             }
-            else if (string_is_equal(ext, "app"))
-               return URL_SAFE_ARCHIVE_TRAP;   /* macOS app bundle */
          }
          start = i + 1;
       }
