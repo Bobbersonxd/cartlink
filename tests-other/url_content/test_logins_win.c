@@ -128,6 +128,88 @@ int main(int argc, char **argv)
    EXPECT(!url_logins_get("https://example.com", user, sizeof(user),
          pass, sizeof(pass)));
 
+   /* A damaged password field next to a good sealed user name: no
+    * login, no crash (bad base64 is never decoded). */
+   {
+      static const char *bad[] = { "AAAA=", "x==", "x=", "====", "A===",
+         "AA=A", "A", "", "%%%%", "AAAA\t", NULL };
+      char good[2048];
+      char text[8192];
+      const char *v;
+      int i;
+      EXPECT(url_logins_set("https://example.com", "erin", "pw5"));
+      t = slurp(path);
+      good[0] = '\0';
+      if ((v = strstr(t, "url_login_https://example.com_user = \"")))
+      {
+         size_t n;
+         v += strlen("url_login_https://example.com_user = \"");
+         n = strcspn(v, "\"");
+         if (n < sizeof(good))
+         {
+            memcpy(good, v, n);
+            good[n] = '\0';
+         }
+      }
+      EXPECT(good[0] != '\0');
+      for (i = 0; bad[i]; i++)
+      {
+         snprintf(text, sizeof(text), "# cartlink-logins v2 dpapi\n"
+               "url_login_https://example.com_user = \"%s\"\n"
+               "url_login_https://example.com_pass = \"%s\"\n", good, bad[i]);
+         put(path, text);
+         EXPECT(!url_logins_get("https://example.com", user, sizeof(user),
+               pass, sizeof(pass)));
+         /* And the other way round. */
+         snprintf(text, sizeof(text), "# cartlink-logins v2 dpapi\n"
+               "url_login_https://example.com_user = \"%s\"\n"
+               "url_login_https://example.com_pass = \"%s\"\n", bad[i], good);
+         put(path, text);
+         EXPECT(!url_logins_get("https://example.com", user, sizeof(user),
+               pass, sizeof(pass)));
+      }
+      /* The good one still opens. */
+      snprintf(text, sizeof(text), "# cartlink-logins v2 dpapi\n"
+            "url_login_https://example.com_user = \"%s\"\n"
+            "url_login_https://example.com_pass = \"%s\"\n", good, good);
+      put(path, text);
+      EXPECT(url_logins_get("https://example.com", user, sizeof(user),
+            pass, sizeof(pass)));
+      EXPECT_STR(user, "erin");
+      EXPECT_STR(pass, "erin");
+   }
+
+   /* A plain file is sealed as soon as it is loaded (the path set at
+    * config load), and no plain .tmp or .bak is left. */
+   {
+      char tmp[1100];
+      char bak[1100];
+      snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+      snprintf(bak, sizeof(bak), "%s.bak", path);
+      put(path, "url_login_https://plain.example_user = \"frank\"\n"
+            "url_login_https://plain.example_pass = \"plainpw\"\n");
+      put(tmp, "url_login_https://plain.example_pass = \"plainpw\"\n");
+      put(bak, "url_login_https://plain.example_pass = \"plainpw\"\n");
+      url_logins_set_path(path);
+      t = slurp(path);
+      EXPECT(strncmp(t, "# cartlink-logins v2 dpapi\n", 27) == 0);
+      EXPECT(strstr(t, "plainpw") == NULL);
+      EXPECT(strstr(t, "frank") == NULL);
+      EXPECT(slurp(tmp)[0] == '\0');
+      EXPECT(slurp(bak)[0] == '\0');
+      EXPECT(url_logins_get("https://plain.example", user, sizeof(user),
+            pass, sizeof(pass)));
+      EXPECT_STR(user, "frank");
+      EXPECT_STR(pass, "plainpw");
+      /* Already sealed: loading again changes nothing. */
+      {
+         char before[8192];
+         snprintf(before, sizeof(before), "%s", slurp(path));
+         url_logins_set_path(path);
+         EXPECT_STR(slurp(path), before);
+      }
+   }
+
    /* An older build's plain file (no marker, host-only keys): read as
     * is, then sealed as a whole on the next save. */
    put(path, "url_login_nas_local_user = \"bob\"\n"

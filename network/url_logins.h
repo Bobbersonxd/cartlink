@@ -66,10 +66,15 @@ bool url_logins_set_archive_keys(const char *access, const char *secret);
  * afterwards. */
 bool url_logins_forget_all(void);
 
-/* True for the files that hold logins or saved servers (url_logins.cfg
- * and its .tmp/.bak, url_servers.cfg), by base name, any case: Cloud
+/* True for the files that hold logins or saved servers (url_logins.cfg,
+ * url_servers.cfg and their .tmp/.bak), by base name, any case: Cloud
  * Sync never uploads them. name may carry a folder ("config/..."). */
 bool url_logins_is_private_file(const char *name);
+
+/* True if s is well-formed base64 (length a multiple of 4, only
+ * A-Z a-z 0-9 + /, '=' only as 1-2 trailing padding): the only input
+ * a sealed (Windows) value is decoded from. */
+bool url_logins_base64_ok(const char *s);
 
 RETRO_END_DECLS
 

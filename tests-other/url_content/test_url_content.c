@@ -27,6 +27,7 @@
 #include "../../network/url_safety.h"
 #include "../../frontend/clipboard.h"
 #include <lrc_hash.h>
+#include <encodings/base64.h>
 
 static int g_checks   = 0;
 static int g_failures = 0;
@@ -2037,12 +2038,53 @@ static void test_logins_legacy(void)
 
 /* Cloud Sync never uploads the logins (and their side files) or the
  * saved servers. */
+/* Only well-formed base64 is ever decoded (libretro's unbase64 trusts
+ * its input). */
+static void test_logins_base64_ok(void)
+{
+   EXPECT(url_logins_base64_ok("AAAA"));
+   EXPECT(url_logins_base64_ok("bm90IHNlYWxlZA=="));
+   EXPECT(url_logins_base64_ok("YWJj"));
+   EXPECT(url_logins_base64_ok("YWI="));
+   EXPECT(url_logins_base64_ok("a+b/"));
+   EXPECT(!url_logins_base64_ok("AAAA="));
+   EXPECT(!url_logins_base64_ok("x=="));
+   EXPECT(!url_logins_base64_ok("x="));
+   EXPECT(!url_logins_base64_ok("="));
+   EXPECT(!url_logins_base64_ok("===="));
+   EXPECT(!url_logins_base64_ok("A==="));
+   EXPECT(!url_logins_base64_ok("AA=A"));
+   EXPECT(!url_logins_base64_ok("AAA"));
+   EXPECT(!url_logins_base64_ok("%%%%"));
+   EXPECT(!url_logins_base64_ok("AA AA=="));
+   EXPECT(!url_logins_base64_ok("AAAA\n"));
+   EXPECT(!url_logins_base64_ok(""));
+   EXPECT(!url_logins_base64_ok(NULL));
+   /* What passes is safe to decode (run under ASan by hand:
+    * make CFLAGS+=-fsanitize=address test). */
+   {
+      static const char *in[] = { "AAAA", "YWI=", "YWJjZA==", "AAAA=",
+         "x==", "x=", "====", "A===", NULL };
+      int i;
+      for (i = 0; in[i]; i++)
+         if (url_logins_base64_ok(in[i]))
+         {
+            int n = 0;
+            unsigned char *b = unbase64(in[i], (int)strlen(in[i]), &n);
+            EXPECT(b != NULL && n >= 1 && n <= 6);
+            free(b);
+         }
+   }
+}
+
 static void test_logins_private_files(void)
 {
    EXPECT(url_logins_is_private_file("config/url_logins.cfg"));
    EXPECT(url_logins_is_private_file("config/url_logins.cfg.tmp"));
    EXPECT(url_logins_is_private_file("config/url_logins.cfg.bak"));
    EXPECT(url_logins_is_private_file("config/url_servers.cfg"));
+   EXPECT(url_logins_is_private_file("config/url_servers.cfg.tmp"));
+   EXPECT(url_logins_is_private_file("config/url_servers.cfg.bak"));
    EXPECT(url_logins_is_private_file("config/sub/URL_Logins.cfg"));
    EXPECT(url_logins_is_private_file("url_logins.cfg"));
    EXPECT(!url_logins_is_private_file("config/retroarch-core-options.cfg"));
@@ -2110,6 +2152,7 @@ int main(int argc, char **argv)
    test_logins_windows_replace();
    test_logins_legacy();
    test_logins_private_files();
+   test_logins_base64_ok();
    test_safety_blocks_programs();
    test_safety_allows_games();
    test_safety_zone_text();

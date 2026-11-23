@@ -54,12 +54,43 @@
 
 static char url_logins_path[4096] = {0};
 
+#ifdef URL_LOGINS_DPAPI
+static void url_logins_seal_existing(void);
+#endif
+
 void url_logins_set_path(const char *path)
 {
    if (path)
       strlcpy(url_logins_path, path, sizeof(url_logins_path));
    else
       url_logins_path[0] = '\0';
+#ifdef URL_LOGINS_DPAPI
+   /* A plain file from an older build is sealed right away, not only
+    * at the next save (called on the main thread, at config load). */
+   url_logins_seal_existing();
+#endif
+}
+
+bool url_logins_base64_ok(const char *s)
+{
+   size_t i;
+   size_t n;
+   size_t pad = 0;
+   if (!s)
+      return false;
+   n = strlen(s);
+   if (n < 4 || (n % 4) != 0)
+      return false;
+   if (s[n - 1] == '=')
+      pad = (s[n - 2] == '=') ? 2 : 1;
+   for (i = 0; i < n - pad; i++)
+   {
+      char c = s[i];
+      if (!(     (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+               || (c >= '0' && c <= '9') || c == '+' || c == '/'))
+         return false;
+   }
+   return true;
 }
 
 /* The site of url ("https://host[:port]", see url_content_origin).
@@ -267,7 +298,10 @@ static bool url_logins_unseal(const char *stored, char *out, size_t len)
    bool ok     = false;
    unsigned char *raw;
 
-   if (string_is_empty(stored)
+   /* libretro's unbase64 trusts its input: a damaged value (wrong
+    * length or padding) would make it write past its buffer. */
+   if (     !url_logins_base64_ok(stored)
+         || strlen(stored) > 65536
          || !(raw = unbase64(stored, (int)strlen(stored), &raw_len)))
       return false;
    in.pbData    = raw;
@@ -415,6 +449,24 @@ static config_file_t *url_logins_open_for_write(void)
    return conf;
 }
 
+#ifdef URL_LOGINS_DPAPI
+/* Seals a plain logins file in place (no-op if missing, already
+ * sealed or unreadable). The plain copy is replaced through .tmp and
+ * a rename; no plain .tmp or .bak is left after it works. */
+static void url_logins_seal_existing(void)
+{
+   bool sealed;
+   config_file_t *conf;
+   if (string_is_empty(url_logins_path))
+      return;
+   if (!(conf = url_logins_open(false, &sealed)))
+      return;
+   if (!sealed && url_logins_seal_all(conf))
+      url_logins_write(conf);
+   config_file_free(conf);
+}
+#endif
+
 static bool url_logins_get_pair(const char *key_a, char *a, size_t alen,
       const char *key_b, char *b, size_t blen)
 {
@@ -547,7 +599,7 @@ bool url_logins_is_private_file(const char *name)
 {
    static const char *names[] = {
       "url_logins.cfg", "url_logins.cfg.tmp", "url_logins.cfg.bak",
-      "url_servers.cfg", NULL
+      "url_servers.cfg", "url_servers.cfg.tmp", "url_servers.cfg.bak", NULL
    };
    const char *base;
    size_t i;
