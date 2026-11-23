@@ -393,6 +393,7 @@ struct us_zip_reader
    uint64_t file_size;
    uint64_t data_off;   /* start of the member's (compressed) bytes */
    const struct us_zip_entry *e;
+   bool short_read;     /* bytes the check needed were not in the file */
 };
 
 static bool us_read_exact(RFILE *f, uint64_t off, void *buf, size_t len)
@@ -513,9 +514,17 @@ static size_t us_zip_read(struct us_zip_reader *r, uint64_t skip,
 static bool us_zip_read_at(void *ctx, uint64_t off, uint8_t *out4)
 {
    struct us_zip_reader *r = (struct us_zip_reader*)ctx;
+   size_t got;
    if (off > US_ZIP_SEEK_MAX)
       return false;
-   return us_zip_read(r, off, out4, 4) == 4;
+   got = us_zip_read(r, off, out4, 4);
+   if (got == 4)
+      return true;
+   /* The caller only asks inside the declared size: RetroArch would
+    * hand out 4 bytes here (from uninitialised memory). */
+   if (got != (size_t)-1)
+      r->short_read = true;
+   return false;
 }
 
 static enum url_safety_verdict us_check_zip(const char *path)
@@ -631,19 +640,30 @@ static enum url_safety_verdict us_check_zip(const char *path)
       struct us_member m;
       struct us_zip_reader r;
       size_t got   = (size_t)-1;
+      size_t want;
       size_t len   = us_zip_entry(cd + pos, (size_t)cd_size - pos, &e);
       pos         += len;
       us_check_member_name(e.name, e.name_len, &m);
       if (!e.usize)
          continue;
-      r.f         = f;
-      r.file_size = (uint64_t)size;
-      r.e         = &e;
+      r.f          = f;
+      r.file_size  = (uint64_t)size;
+      r.e          = &e;
+      r.short_read = false;
       /* No local header where the directory says: the readers could
        * disagree on where the bytes start. */
       if (!us_zip_locate(&r))
          goto end;
-      got = us_zip_read(&r, 0, head, URL_SAFETY_HEAD_LEN);
+      /* RetroArch always hands out usize bytes, filling what the file
+       * lacks with uninitialised memory: every byte the check looks at
+       * must really be there. */
+      if (e.method == 0 && e.usize > r.file_size - r.data_off)
+         goto end;
+      want = e.usize < URL_SAFETY_HEAD_LEN ? (size_t)e.usize
+                                           : URL_SAFETY_HEAD_LEN;
+      got  = us_zip_read(&r, 0, head, want);
+      if (got != (size_t)-1 && got != want)
+         goto end;                 /* the stream ends early */
       if (us_check_member_bytes(&m, got != (size_t)-1, head,
                got == (size_t)-1 ? 0 : got, e.usize,
                us_zip_read_at, &r) != URL_SAFE_OK)
@@ -651,6 +671,8 @@ static enum url_safety_verdict us_check_zip(const char *path)
          v = URL_SAFE_ARCHIVE_TRAP;
          goto end;
       }
+      if (r.short_read)
+         goto end;
    }
    v = URL_SAFE_OK;
 

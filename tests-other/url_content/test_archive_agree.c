@@ -19,6 +19,11 @@
  * extracted the way a core load would, and its bytes must not be a
  * program (PE, ELF, Mach-O, script, shortcut, OLE). A disagreement
  * means the check read different data than RetroArch extracts.
+ * Built with -Wl,--wrap=malloc: every fresh buffer is filled with a
+ * pattern that reads as a PE header ("PE\0\0" at 0x40, e_lfanew 0x40
+ * at 0x3C), so bytes RetroArch hands out without reading them from
+ * the file (a member shorter than its declared size) look like a
+ * program instead of harmless zeros.
  * Usage: test_archive_agree <archive>...   (exit 1 on a disagreement) */
 
 #include <stdio.h>
@@ -29,6 +34,19 @@
 #include <lists/string_list.h>
 
 #include "../../network/url_safety.h"
+
+void *__real_malloc(size_t len);
+void *__wrap_malloc(size_t len);
+void *__wrap_malloc(size_t len)
+{
+   static const unsigned char unit[8] = {'P', 'E', 0, 0, 0x40, 0, 0, 0};
+   unsigned char *p = (unsigned char*)__real_malloc(len);
+   size_t i;
+   if (p)
+      for (i = 0; i < len; i++)
+         p[i] = unit[i & 7];
+   return p;
+}
 
 int main(int argc, char **argv)
 {

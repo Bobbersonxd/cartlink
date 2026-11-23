@@ -144,7 +144,7 @@ AGREE_SRCS := test_archive_agree.c \
         $(LRC)/time/rtime.c
 
 $(AGREE_BIN): $(AGREE_SRCS) $(SAFETY_OBJ) $(SZ_LIB) ../../network/url_safety.h
-	$(CC) $(CFLAGS) -I../../deps -DHAVE_ZLIB -DHAVE_7ZIP -D_7ZIP_ST -o $@ $(AGREE_SRCS) $(SAFETY_LIBS)
+	$(CC) $(CFLAGS) -I../../deps -DHAVE_ZLIB -DHAVE_7ZIP -D_7ZIP_ST -o $@ $(AGREE_SRCS) $(SAFETY_LIBS) -Wl,--wrap=malloc
 
 test: $(BIN) $(AGREE_BIN)
 	python3 -I ./make_archives.py --run ./$(BIN) ./$(AGREE_BIN)

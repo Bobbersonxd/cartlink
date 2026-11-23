@@ -166,6 +166,49 @@ def two_eocd_zip(path):
         f.write(blob)
 
 
+def short_member_zips(d):
+    # Members with fewer bytes in the file than their declared size
+    # (re-review I1): RetroArch returns the declared size anyway, the
+    # rest being uninitialised memory.
+    def rlh(name, method, cs, us):
+        return struct.pack("<IHHHHHIIIHH", 0x04034B50, 20, 0, method, 0, 0,
+                           0, cs, us, len(name), 0) + name
+
+    def rcd(name, off, method, cs, us):
+        return struct.pack("<IHHHHHHIIIHHHHHII", 0x02014B50, 20, 20, 0,
+                           method, 0, 0, 0, cs, us, len(name), 0, 0, 0, 0,
+                           0, off) + name
+    us = 0x1000
+    for name, fname in ((b"GAME.EXE", "stored_past_eof.zip"),
+                        (b"game.bin", "stored_past_eof_bin.zip")):
+        # Stored, csize = usize = 0x1000; the local header and "MZ" sit
+        # in the EOCD comment, at the very end of the file.
+        c = rcd(name, 0, 0, us, us)
+        c = rcd(name, len(c) + 22, 0, us, us)
+        with open(os.path.join(d, fname), "wb") as f:
+            f.write(c + eocd(1, len(c), 0, rlh(name, 0, us, us) + b"MZ"))
+    co = zlib.compressobj(9, zlib.DEFLATED, -15)
+    z = co.compress(b"MZ") + co.flush()
+    for name, fname in ((b"GAME.EXE", "deflate_short.zip"),
+                        (b"game.bin", "deflate_short_bin.zip")):
+        # A deflate stream that gives only "MZ", usize = 0x1000.
+        body = rlh(name, 8, len(z), us) + z
+        c = rcd(name, 0, 8, len(z), us)
+        with open(os.path.join(d, fname), "wb") as f:
+            f.write(body + c + eocd(1, len(c), len(body)))
+    # A DOS MZ whose PE offset (past 64 KiB, inside the declared size)
+    # lies past the end of the deflate stream.
+    b = bytearray(70 * 1024)
+    b[0:2] = b"MZ"
+    struct.pack_into("<I", b, 0x3C, 100 * 1024)
+    co = zlib.compressobj(9, zlib.DEFLATED, -15)
+    z = co.compress(bytes(b)) + co.flush()
+    body = rlh(b"data.bin", 8, len(z), 200 * 1024) + z
+    c = rcd(b"data.bin", 0, 8, len(z), 200 * 1024)
+    with open(os.path.join(d, "deflate_short_far.zip"), "wb") as f:
+        f.write(body + c + eocd(1, len(c), len(body)))
+
+
 def seven(tool, path, files, extra=None):
     # files: (name, data) written into a temp folder, then archived.
     work = tempfile.mkdtemp()
@@ -220,6 +263,7 @@ def main():
     one_member_zip(j("usize_ffff.zip"), b"game.gb", gb[:512],
                    csize=0xFFFFFFFF, usize=0xFFFFFFFF)
     one_member_zip(j("dir_with_pe.zip"), b"x/", pe)
+    short_member_zips(d)
     write_zip(j("cmd_member.zip"), [("game.gb", gb), ("run.cmd", b"@echo hi\r\n")])
     write_zip(j("stream_name.zip"), [("run.vbs::$DATA", b'MsgBox "hi"')])
     write_zip(j("colon_name.zip"), [("game:alt.gb", gb)])

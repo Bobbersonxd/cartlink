@@ -1715,6 +1715,12 @@ static void test_safety_archive_zip(void)
    EXPECT_FIX("zip64_marker.zip", URL_SAFE_UNREADABLE);
    EXPECT_FIX("usize_ffff.zip", URL_SAFE_UNREADABLE);
    EXPECT_FIX("dir_with_pe.zip", URL_SAFE_ARCHIVE_TRAP);
+   /* Re-review I1: fewer bytes in the file than the declared size. */
+   EXPECT_FIX("stored_past_eof.zip", URL_SAFE_UNREADABLE);
+   EXPECT_FIX("stored_past_eof_bin.zip", URL_SAFE_UNREADABLE);
+   EXPECT_FIX("deflate_short.zip", URL_SAFE_UNREADABLE);
+   EXPECT_FIX("deflate_short_bin.zip", URL_SAFE_UNREADABLE);
+   EXPECT_FIX("deflate_short_far.zip", URL_SAFE_UNREADABLE);
    /* Ruling R6 + minors: .cmd always, no ':' in member names. */
    EXPECT_FIX("cmd_member.zip", URL_SAFE_ARCHIVE_TRAP);
    EXPECT_FIX("stream_name.zip", URL_SAFE_ARCHIVE_TRAP);
