@@ -221,17 +221,32 @@ entry `io.github.cartlink.Cartlink`, icon, docs), so it can sit next to
 an installed RetroArch.
 
 ### Windows (cross-built on Linux)
-Needs MinGW-w64 (`x86_64-w64-mingw32-gcc`), `rsync` and `zip`.
+Needs MinGW-w64 (`x86_64-w64-mingw32-gcc`) and `zip`.
 ```sh
 tools/build_windows.sh            # BUILD_DIR=... OUT_DIR=... to choose folders
 ```
 It builds a static 64-bit `cartlink.exe` (Windows 10 or newer) in a
-separate copy of the sources and packs `cartlink-win64.zip` with the
-licence and a short README. No assets, core info files or cores are
+fresh copy of the sources and packs `cartlink-<version>-win64.zip` with
+the licence, the third-party notices, `SOURCE.txt` (the commit it was
+built from) and a short README. No assets, core info files or cores are
 included: on first run use **Main Menu → Online Updater** (Update
 Assets, Update Core Info Files, then Core Downloader for the cores you
 want). Windows SmartScreen may warn about an unknown app: **More info →
 Run anyway**.
+
+### Release archives
+```sh
+tools/build_windows.sh   # dist/cartlink-<version>-win64.zip
+tools/build_linux.sh     # dist/cartlink-<version>-linux-x86_64.tar.gz
+```
+Both build only what is committed (`git archive HEAD`) and write
+`dist/cartlink-<version>-source.tar.gz` from the same commit next to
+the binaries: publish it with them (GPLv3 needs the source to go with
+every binary). The version is in `CARTLINK_VERSION`. A tree with
+uncommitted or untracked files is refused; `--dirty` builds it anyway
+for a local test and names the files `-DIRTY`. `build/` and `dist/`
+are git-ignored. The Linux program is linked against the build
+machine's system libraries (listed in its `SOURCE.txt`).
 
 ### Tests
 ```sh

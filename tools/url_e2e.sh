@@ -46,8 +46,13 @@
 #
 # Usage: tools/url_e2e.sh
 #   RA=<cartlink binary>           default: ./cartlink in the repo
-#   URL_E2E_BASE=<dir>             default: ~/retro-link (test-cores/,
-#                                  test-content/ live there)
+#   URL_E2E_BASE=<dir>             folder holding test-cores/ and
+#                                  test-content/; default:
+#                                  tests-other/url_content/e2e-assets
+#                                  (git-ignored). Missing ones are made
+#                                  there: the fceumm test core is cloned
+#                                  from GitHub and built, the test ROM
+#                                  is generated.
 #   URL_E2E_SKIP_NONET=1           skip run 5 (it builds a full copy)
 # Needs: python3, git, make, a C compiler.
 
@@ -55,7 +60,7 @@ set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 RA=${RA:-$ROOT/cartlink}
-BASE=${URL_E2E_BASE:-$HOME/retro-link}
+BASE=${URL_E2E_BASE:-$ROOT/tests-other/url_content/e2e-assets}
 CORES=$BASE/test-cores
 CONTENT=$BASE/test-content
 CORE=$CORES/fceumm_libretro.so
@@ -164,8 +169,9 @@ if [ ! -x "$RA" ]; then
    exit 1
 fi
 
+echo "Test cores and content: $BASE (URL_E2E_BASE to use another folder)"
 if [ ! -f "$CORE" ]; then
-   echo "Building the fceumm test core into $CORES ..."
+   echo "No test core at $CORE: cloning and building fceumm there ..."
    mkdir -p "$CORES"
    if [ ! -d "$CORES/src-fceumm" ]; then
       git clone --depth 1 https://github.com/libretro/libretro-fceumm.git \

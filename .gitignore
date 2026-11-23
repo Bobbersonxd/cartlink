@@ -291,3 +291,5 @@ pkg/psl1ght/pkg/USRDIR/shaders_cg/
 tests-other/**/*.so
 tests-other/**/*.dll
 tests-other/**/*.dylib
+/dist/
+tests-other/url_content/e2e-assets/

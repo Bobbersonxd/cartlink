@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Copyright (C) 2026 Cartlink contributors. GNU GPL v3 or later (see COPYING).
 # Cross-builds the 64-bit Windows cartlink.exe with MinGW-w64 on Linux
-# and packs it into a zip.
-#
-# The build runs in a separate folder (a copy of the sources), so the
-# Linux build in this repo is never touched. Builds are incremental:
-# only changed files are copied, and configure only re-runs when the
-# options below change.
+# from the committed sources (`git archive HEAD`) and writes:
+#   cartlink-<version>-win64.zip      cartlink.exe, COPYING.txt,
+#                                     THIRD-PARTY-NOTICES.txt, SOURCE.txt,
+#                                     README-Cartlink.txt
+#   cartlink-<version>-source.tar.gz  the exact source it was built from
+# A tree with uncommitted or untracked files is refused; --dirty builds
+# it anyway for a local test and names both files -DIRTY (see
+# tools/release_common.sh). Every run is a fresh build in a fresh copy,
+# so the repo's own Linux build is never touched.
 #
 # What is in the build: networking + HTTPS (bundled mbedTLS), menus
 # (Ozone, XMB, MaterialUI, RGUI), video (OpenGL, Vulkan, D3D9/10/11/12,
@@ -16,28 +19,37 @@
 # Left out (no MinGW copies of these on the build machine): SDL/SDL2,
 # FreeType (the built-in STB font is used), FFmpeg, Cg, Qt, Discord.
 #
-# Usage: tools/build_windows.sh
-#   BUILD_DIR=<dir>   default: <repo>/../build-win
-#   OUT_DIR=<dir>     default: <repo>/../builds
+# Usage: tools/build_windows.sh [--dirty]
+#   BUILD_DIR=<dir>   default: <repo>/build/win64 (git-ignored)
+#   OUT_DIR=<dir>     default: <repo>/dist (git-ignored)
 #   JOBS=<n>          default: nproc
-# Needs: x86_64-w64-mingw32-gcc (pacman: mingw-w64-gcc), git, rsync, zip.
+#   CARTLINK_REPO_URL=<url>   repo link written into SOURCE.txt
+# Needs: x86_64-w64-mingw32-gcc (pacman: mingw-w64-gcc), git, zip,
+# python3.
 
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-BUILD_DIR=${BUILD_DIR:-$(dirname "$ROOT")/build-win}
-OUT_DIR=${OUT_DIR:-$(dirname "$ROOT")/builds}
+# shellcheck source=tools/release_common.sh
+. "$ROOT/tools/release_common.sh"
+
+BUILD_DIR=${BUILD_DIR:-$ROOT/build/win64}
+OUT_DIR=${OUT_DIR:-$ROOT/dist}
 JOBS=${JOBS:-$(nproc)}
 HOST=x86_64-w64-mingw32
 SRC=$BUILD_DIR/src
-ZIP=$OUT_DIR/cartlink-win64.zip
 
-for tool in $HOST-gcc $HOST-g++ $HOST-strip git rsync zip; do
+for tool in $HOST-gcc $HOST-g++ $HOST-strip $HOST-objdump git zip gzip tar python3; do
    command -v "$tool" >/dev/null 2>&1 || { echo "missing: $tool" >&2; exit 1; }
 done
 
-LOW="nice -n 19"
-command -v ionice >/dev/null 2>&1 && LOW="$LOW ionice -c3"
+release_init "$ROOT" "$@"
+mkdir -p "$BUILD_DIR" "$OUT_DIR"
+BUILD_DIR=$(cd "$BUILD_DIR" && pwd)
+OUT_DIR=$(cd "$OUT_DIR" && pwd)
+SRC=$BUILD_DIR/src
+ZIP=$OUT_DIR/$NAME-win64.zip
+TARBALL=$OUT_DIR/$NAME-source.tar.gz
 
 CONFIGURE_OPTS="--host=$HOST \
  --disable-qt --disable-sdl --disable-sdl2 --disable-ffmpeg --disable-cg \
@@ -46,29 +58,24 @@ CONFIGURE_OPTS="--host=$HOST \
  --disable-systemmbedtls --enable-builtinmbedtls"
 STATIC_LDFLAGS="-static-libgcc -static-libstdc++ -static"
 
-echo "== Copying sources to $SRC"
-mkdir -p "$SRC" "$OUT_DIR"
-# Tracked files plus new, not-ignored ones, as they are on disk now
-# (uncommitted edits included). Deleted files are skipped.
-(cd "$ROOT" && git ls-files -z --cached --others --exclude-standard) \
-   | (cd "$ROOT" && while IFS= read -r -d '' f; do
-        [ -e "$f" ] && printf '%s\0' "$f"; done) \
-   | rsync -a --from0 --files-from=- "$ROOT/" "$SRC/"
+echo "== Source $TARBALL (commit $SHORT)"
+release_source_tarball "$ROOT" "$TARBALL"
+release_unpack "$TARBALL" "$SRC"
 
-STAMP="$SRC/.cartlink-configure"
-WANT="$CONFIGURE_OPTS LDFLAGS=$STATIC_LDFLAGS"
-if [ ! -f "$SRC/config.mk" ] || [ "$(cat "$STAMP" 2>/dev/null)" != "$WANT" ]; then
-   echo "== Configuring"
-   # shellcheck disable=SC2086
-   (cd "$SRC" && LDFLAGS="$STATIC_LDFLAGS" CROSS_COMPILE=$HOST- \
-      $LOW ./configure $CONFIGURE_OPTS > "$BUILD_DIR/configure.log" 2>&1) \
-      || { tail -20 "$BUILD_DIR/configure.log"; exit 1; }
-   printf '%s' "$WANT" > "$STAMP"
+echo "== Configuring (log: $BUILD_DIR/configure.log)"
+# shellcheck disable=SC2086
+if ! (cd "$SRC" && LDFLAGS="$STATIC_LDFLAGS" CROSS_COMPILE=$HOST- \
+      $LOW ./configure $CONFIGURE_OPTS > "$BUILD_DIR/configure.log" 2>&1); then
+   tail -20 "$BUILD_DIR/configure.log"; exit 1
 fi
 
+GITV=$SHORT
+[ "$DIRTY" = 1 ] && GITV=$SHORT-dirty
 echo "== Building (log: $BUILD_DIR/make.log)"
-(cd "$SRC" && $LOW make -j"$JOBS" > "$BUILD_DIR/make.log" 2>&1) \
-   || { grep -E 'error' "$BUILD_DIR/make.log" | head -20; exit 1; }
+if ! (cd "$SRC" && $LOW make -j"$JOBS" GIT_VERSION="$GITV" > "$BUILD_DIR/make.log" 2>&1); then
+   grep -E 'error' "$BUILD_DIR/make.log" | head -20 || true
+   tail -20 "$BUILD_DIR/make.log"; exit 1
+fi
 
 if $HOST-objdump -p "$SRC/cartlink.exe" | grep -qiE 'DLL Name: lib(gcc|stdc|winpthread)'; then
    echo "cartlink.exe still needs MinGW DLLs; static linking failed" >&2
@@ -80,12 +87,19 @@ STAGE="$BUILD_DIR/stage/Cartlink"
 rm -rf "$BUILD_DIR/stage"
 mkdir -p "$STAGE"
 $HOST-strip -o "$STAGE/cartlink.exe" "$SRC/cartlink.exe"
-cp "$ROOT/COPYING" "$STAGE/COPYING.txt"
+cp "$SRC/COPYING" "$STAGE/COPYING.txt"
+python3 "$SRC/tools/third_party_notices.py" "$SRC" "$STAGE/THIRD-PARTY-NOTICES.txt" windows
+release_source_txt "$BUILD_DIR/SOURCE.txt" "64-bit Windows" \
+"cartlink.exe is statically linked: it contains the MinGW-w64 runtime,
+winpthreads, libgcc and libstdc++ (built with MinGW-w64 GCC
+$($HOST-gcc -dumpversion)); their notices are in THIRD-PARTY-NOTICES.txt."
 # Windows line endings for Notepad.
-sed 's/$/\r/' > "$STAGE/README-Cartlink.txt" <<'EOF'
-Cartlink, 64-bit Windows
+sed 's/$/\r/' "$BUILD_DIR/SOURCE.txt" > "$STAGE/SOURCE.txt"
+sed 's/$/\r/' > "$STAGE/README-Cartlink.txt" <<EOF
+Cartlink $VERSION, 64-bit Windows
 An unofficial fork of RetroArch 1.22.2 (not affiliated with libretro)
 that adds Load from URL. Licence: GNU GPL v3 or later (COPYING.txt).
+Source code: see SOURCE.txt.
 
 1. Unzip this folder anywhere (not inside Program Files) and run cartlink.exe.
    Settings, cores and downloads are kept in this folder.
@@ -107,5 +121,7 @@ Needs Windows 10 or newer.
 EOF
 rm -f "$ZIP"
 (cd "$BUILD_DIR/stage" && zip -q -9 -r "$ZIP" Cartlink)
-echo "== Done: $ZIP"
+echo "== Done:"
+echo "   $ZIP"
+echo "   $TARBALL"
 unzip -l "$ZIP"
