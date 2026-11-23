@@ -44,6 +44,10 @@ CATALOG = {
     "/cat/Game Boy/": [caddy_item("Space & Time #2.gb", False,
                                   "./Space%20&%20Time%20%232.gb", 7)],
     "/cat/empty/": [],
+    "/": [caddy_item("cat/", True, "./cat/", 4096)],
+    # More than the 4096 items a game list shows.
+    "/cat/big/": [caddy_item("g%04d.gb" % i, False, "./g%04d.gb" % i, 7)
+                  for i in range(4100)],
 }
 CATALOG_FILES = {"/cat/x.gb", "/cat/Game Boy/Space & Time #2.gb"}
 
@@ -208,7 +212,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/plain.json":
             self.send_body(200, b'{"hi":1}', "application/json")
             return
-        if path.startswith("/cat/") and self.catalog(path):
+        if (path.startswith("/cat/") or path == "/") and self.catalog(path):
             return
         if path.startswith("/basic/cat/"):
             self.log_auth()

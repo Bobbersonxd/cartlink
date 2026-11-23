@@ -46,6 +46,8 @@
 #include "../network/url_content.h"
 #include "../network/url_fetch.h"
 #include "../network/url_logins.h"
+#include "../network/url_servers.h"
+#include "../network/url_catalog.h"
 #include "../network/url_archive_org.h"
 #ifdef HAVE_MENU
 #include "../menu/menu_driver.h"
@@ -92,6 +94,7 @@ typedef struct url_task_data
    char out_path[PATH_MAX_LENGTH];
    char challenge[1024];
    char err[512];
+   struct url_catalog catalog; /* a game list (URL_FETCH_CATALOG) */
 } url_task_data_t;
 
 /* Main thread only. busy is true while a download task runs; url,
@@ -117,6 +120,7 @@ static void url_task_data_free(url_task_data_t *d)
 {
    url_content_wipe(d->user, sizeof(d->user));
    url_content_wipe(d->pass, sizeof(d->pass));
+   url_catalog_free(&d->catalog);
 #ifdef HAVE_THREADS
    slock_free(d->lock);
 #endif
@@ -169,7 +173,7 @@ static void url_task_fetch(url_task_data_t *d)
          d->out_path, sizeof(d->out_path),
          d->challenge, sizeof(d->challenge),
          d->err, sizeof(d->err),
-         url_task_progress_cb, d, NULL);
+         url_task_progress_cb, d, &d->catalog);
 #ifdef HAVE_THREADS
    slock_lock(d->lock);
 #endif
@@ -261,6 +265,7 @@ static void url_task_handler(retro_task_t *task)
    {
       case URL_FETCH_OK:
       case URL_FETCH_CACHED:
+      case URL_FETCH_CATALOG: /* the callback opens it in the menu */
          break;
       case URL_FETCH_NEED_LOGIN:
          if (d->has_login)
@@ -280,7 +285,6 @@ static void url_task_handler(retro_task_t *task)
          url_task_finish_msg(task,
                msg_hash_to_str(MSG_URL_CONTENT_NOT_A_FILE), true);
          break;
-      case URL_FETCH_CATALOG: /* a game list: err says where to open it */
       case URL_FETCH_TOO_BIG:
       case URL_FETCH_FAILED:
       default:
@@ -395,6 +399,116 @@ static void url_task_user_cb(void *userdata, const char *line)
 }
 #endif
 
+/* ---------- game lists (one per open catalog menu level) ---------- */
+
+#define URL_CATALOG_LEVELS 32
+
+/* Main thread only. Each open catalog menu level owns one entry; it is
+ * freed when the menu pops that level (task_url_catalog_prune from
+ * menu_driver.c) or when a new level is stored at its depth. */
+static struct
+{
+   size_t depth;
+   struct url_catalog cat;
+} url_catalog_levels[URL_CATALOG_LEVELS];
+static size_t url_catalog_level_count;
+
+void task_url_catalog_prune(size_t depth)
+{
+   size_t i = 0;
+
+   while (i < url_catalog_level_count)
+   {
+      if (url_catalog_levels[i].depth > depth)
+      {
+         url_catalog_free(&url_catalog_levels[i].cat);
+         url_catalog_levels[i] =
+               url_catalog_levels[--url_catalog_level_count];
+         memset(&url_catalog_levels[url_catalog_level_count], 0,
+               sizeof(url_catalog_levels[0]));
+      }
+      else
+         i++;
+   }
+}
+
+const struct url_catalog *task_url_catalog_get(size_t depth,
+      const char *url)
+{
+   size_t i;
+
+   if (!url)
+      return NULL;
+   for (i = 0; i < url_catalog_level_count; i++)
+      if (     url_catalog_levels[i].depth == depth
+            && string_is_equal(url_catalog_levels[i].cat.base, url))
+         return &url_catalog_levels[i].cat;
+   return NULL;
+}
+
+#ifdef HAVE_MENU
+/* Takes cat over (cat is zeroed) for the level at depth, replacing any
+ * list at that depth or deeper. False (cat freed) if there is no room. */
+static bool url_catalog_level_store(size_t depth, struct url_catalog *cat)
+{
+   task_url_catalog_prune(depth - 1);
+   if (url_catalog_level_count >= URL_CATALOG_LEVELS)
+   {
+      url_catalog_free(cat);
+      return false;
+   }
+   url_catalog_levels[url_catalog_level_count].depth = depth;
+   url_catalog_levels[url_catalog_level_count].cat   = *cat;
+   url_catalog_level_count++;
+   memset(cat, 0, sizeof(*cat));
+   return true;
+}
+
+/* A link answered with a game list: remember the server and open the
+ * list as a new menu level on top of the current one. */
+static void url_task_open_catalog(url_task_data_t *d)
+{
+   char root[URL_CATALOG_URL_LEN];
+   char url[URL_CATALOG_URL_LEN];
+   struct menu_state *menu_st = menu_state_get_ptr();
+   file_list_t *stack;
+   size_t depth;
+
+   if (string_is_empty(d->catalog.base))
+      strlcpy(d->catalog.base, d->url, sizeof(d->catalog.base));
+   strlcpy(url, d->catalog.base, sizeof(url));
+
+   url_servers_root(root, sizeof(root), url);
+   if (!string_is_empty(root) && !url_servers_add(root))
+      RARCH_WARN("[URL] Could not save the server %s.\n", root);
+
+   if (!(menu_st->flags & MENU_ST_FLAG_ALIVE))
+      retroarch_menu_running();
+   if (!menu_st->entries.list
+         || !(stack = MENU_LIST_GET(menu_st->entries.list, 0)))
+   {
+      url_catalog_free(&d->catalog);
+      return;
+   }
+   depth = stack->size + 1; /* the level about to be pushed */
+
+   if (d->catalog.truncated)
+      url_task_notify(msg_hash_to_str(MSG_URL_CATALOG_TRUNCATED),
+            MESSAGE_QUEUE_CATEGORY_INFO);
+
+   RARCH_LOG("[URL] Game list with %u item(s).\n",
+         (unsigned)d->catalog.count);
+   if (!url_catalog_level_store(depth, &d->catalog))
+   {
+      url_task_notify(msg_hash_to_str(MSG_URL_CONTENT_FAILED),
+            MESSAGE_QUEUE_CATEGORY_ERROR);
+      return;
+   }
+   if (action_ok_url_catalog_push(url) != 0)
+      task_url_catalog_prune(depth - 1);
+}
+#endif
+
 static void url_task_callback(retro_task_t *task,
       void *task_data, void *user_data, const char *error)
 {
@@ -415,6 +529,16 @@ static void url_task_callback(retro_task_t *task,
                d->result == URL_FETCH_CACHED ? "Cache hit" : "Downloaded",
                d->out_path);
          url_task_load(d->out_path);
+         break;
+      case URL_FETCH_CATALOG:
+         /* A login typed for a list is kept exactly as for a file. */
+         if (d->has_login && !url_logins_set(d->host, d->user, d->pass))
+            RARCH_WARN("[URL] Could not save the login for %s.\n", d->host);
+#ifdef HAVE_MENU
+         url_task_open_catalog(d);
+#else
+         RARCH_ERR("[URL] %s\n", msg_hash_to_str(MSG_URL_CATALOG_CLI));
+#endif
          break;
       case URL_FETCH_NEED_LOGIN:
          /* One prompt per answer from the server: a wrong login comes
@@ -664,7 +788,9 @@ bool task_url_content_fetch_cli(const char *url,
       case URL_FETCH_NOT_A_FILE:
          url_cli_error(msg_hash_to_str(MSG_URL_CONTENT_NOT_A_FILE));
          break;
-      case URL_FETCH_CATALOG: /* a game list: err says where to open it */
+      case URL_FETCH_CATALOG: /* game lists need the menu */
+         url_cli_error(msg_hash_to_str(MSG_URL_CATALOG_CLI));
+         break;
       case URL_FETCH_TOO_BIG:
       case URL_FETCH_FAILED:
       default:

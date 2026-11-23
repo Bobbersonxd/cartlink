@@ -123,6 +123,10 @@
 #if defined(HAVE_NETWORKING) && defined(HAVE_WIFI)
 #include "../network/wifi_driver.h"
 #endif
+#ifdef HAVE_NETWORKING
+#include "../network/url_catalog.h"
+#include "../network/url_servers.h"
+#endif
 #include "../tasks/task_content.h"
 #include "../tasks/tasks_internal.h"
 #include "../dynamic.h"
@@ -8208,6 +8212,14 @@ unsigned menu_displaylist_build_list(
                   MENU_ENUM_LABEL_LOAD_FROM_URL,
                   MENU_SETTING_ACTION, 0, 0, NULL))
             count++;
+         /* Shown once a game list has been opened. */
+         if (url_servers_count() > 0)
+            if (menu_entries_append(list,
+                     msg_hash_to_str(MENU_ENUM_LABEL_VALUE_URL_SAVED_SERVERS),
+                     msg_hash_to_str(MENU_ENUM_LABEL_URL_SAVED_SERVERS),
+                     MENU_ENUM_LABEL_URL_SAVED_SERVERS,
+                     MENU_SETTING_ACTION, 0, 0, NULL))
+               count++;
 #endif
 
          if (     !settings->bools.kiosk_mode_enable
@@ -13459,6 +13471,87 @@ bool menu_displaylist_ctl(enum menu_displaylist_ctl_state type,
                                | MD_FLAG_NEED_CLEAR;
 #endif
             break;
+#ifdef HAVE_NETWORKING
+         case DISPLAYLIST_URL_CATALOG:
+            menu_entries_clear(info->list);
+            {
+               /* The list stored for this level (menu stack depth +
+                * folder URL); one row per entry, entry_idx = its index. */
+               file_list_t *stack = menu_st->entries.list
+                  ? MENU_LIST_GET(menu_st->entries.list, 0) : NULL;
+               const struct url_catalog *cat = stack
+                  ? task_url_catalog_get(stack->size, info->path) : NULL;
+               size_t i;
+
+               if (cat)
+               {
+                  for (i = 0; i < cat->count; i++)
+                  {
+                     char shown[URL_CATALOG_NAME_LEN + 3];
+                     const struct url_catalog_entry *e = &cat->entries[i];
+                     if (e->is_dir)
+                        snprintf(shown, sizeof(shown), "[%s]", e->name);
+                     else
+                        strlcpy(shown, e->name, sizeof(shown));
+                     if (menu_entries_append(info->list, shown,
+                              msg_hash_to_str(MENU_ENUM_LABEL_URL_CATALOG_ENTRY),
+                              MENU_ENUM_LABEL_URL_CATALOG_ENTRY,
+                              MENU_SETTING_ACTION, 0, i, NULL))
+                        count++;
+                  }
+               }
+
+               if (count == 0)
+                  menu_entries_append(info->list,
+                        msg_hash_to_str(MSG_URL_CATALOG_EMPTY),
+                        msg_hash_to_str(MENU_ENUM_LABEL_NO_ENTRIES_TO_DISPLAY),
+                        MENU_ENUM_LABEL_NO_ENTRIES_TO_DISPLAY,
+                        FILE_TYPE_NONE, 0, 0, NULL);
+
+               info->flags       |= MD_FLAG_NEED_REFRESH
+                                  | MD_FLAG_NEED_PUSH;
+            }
+            break;
+         case DISPLAYLIST_URL_SERVERS:
+            menu_entries_clear(info->list);
+            {
+               /* Each server, then its "Remove this server" row; both
+                * carry the server's index in entry_idx. */
+               size_t n = url_servers_count();
+               size_t i;
+
+               for (i = 0; i < n; i++)
+               {
+                  char url[URL_CATALOG_URL_LEN];
+                  if (!url_servers_get(i, url, sizeof(url)))
+                     continue;
+                  if (menu_entries_append(info->list, url,
+                           msg_hash_to_str(MENU_ENUM_LABEL_URL_SERVER_ENTRY),
+                           MENU_ENUM_LABEL_URL_SERVER_ENTRY,
+                           MENU_SETTING_ACTION, 0, i, NULL))
+                     count++;
+                  if (menu_entries_append(info->list,
+                           msg_hash_to_str(MSG_URL_SERVER_REMOVE),
+                           msg_hash_to_str(MENU_ENUM_LABEL_URL_SERVER_REMOVE),
+                           MENU_ENUM_LABEL_URL_SERVER_REMOVE,
+                           MENU_SETTING_ACTION, 0, i, NULL))
+                     count++;
+               }
+
+               if (count == 0)
+                  menu_entries_append(info->list,
+                        msg_hash_to_str(MENU_ENUM_LABEL_VALUE_NO_ENTRIES_TO_DISPLAY),
+                        msg_hash_to_str(MENU_ENUM_LABEL_NO_ENTRIES_TO_DISPLAY),
+                        MENU_ENUM_LABEL_NO_ENTRIES_TO_DISPLAY,
+                        FILE_TYPE_NONE, 0, 0, NULL);
+               else if (menu_st->selection_ptr >= count)
+                  menu_st->selection_ptr = count - 1;
+
+               info->flags       |= MD_FLAG_NEED_REFRESH
+                                  | MD_FLAG_NEED_PUSH;
+            }
+            break;
+#endif
          case DISPLAYLIST_CORE_CONTENT_DIRS_SUBDIR:
             {
 #ifdef HAVE_NETWORKING

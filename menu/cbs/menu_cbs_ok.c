@@ -86,6 +86,8 @@
 #ifdef HAVE_NETWORKING
 #include "../../network/netplay/netplay.h"
 #include "../../network/url_logins.h"
+#include "../../network/url_servers.h"
+#include "../../network/url_catalog.h"
 #ifdef HAVE_WIFI
 #include "../../network/wifi_driver.h"
 #endif
@@ -1669,6 +1671,27 @@ int generic_action_ok_displaylist_push(
          info.enum_idx      = MENU_ENUM_LABEL_DEFERRED_CORE_CONTENT_DIRS_SUBDIR_LIST;
          dl_type            = DISPLAYLIST_GENERIC;
          break;
+#ifdef HAVE_NETWORKING
+      case ACTION_OK_DL_URL_CATALOG_LIST:
+         info.type          = type;
+         info.directory_ptr = idx;
+         info_path          = path; /* the folder URL */
+         info_label         = msg_hash_to_str(
+               MENU_ENUM_LABEL_DEFERRED_URL_CATALOG_LIST);
+         info.enum_idx      = MENU_ENUM_LABEL_DEFERRED_URL_CATALOG_LIST;
+         dl_type            = DISPLAYLIST_GENERIC;
+         break;
+      case ACTION_OK_DL_URL_SERVERS_LIST:
+         info.type          = type;
+         info.directory_ptr = idx;
+         info_path          = msg_hash_to_str(
+               MENU_ENUM_LABEL_VALUE_URL_SAVED_SERVERS);
+         info_label         = msg_hash_to_str(
+               MENU_ENUM_LABEL_DEFERRED_URL_SERVERS_LIST);
+         info.enum_idx      = MENU_ENUM_LABEL_DEFERRED_URL_SERVERS_LIST;
+         dl_type            = DISPLAYLIST_GENERIC;
+         break;
+#endif
       case ACTION_OK_DL_CORE_SYSTEM_FILES_LIST:
          info.type          = type;
          info.directory_ptr = idx;
@@ -8447,6 +8470,72 @@ static void action_ok_load_from_url_cb(void *userdata, const char *line)
       menu_input_dialog_end();
 }
 
+int action_ok_url_catalog_push(const char *url)
+{
+   struct menu_state *menu_st = menu_state_get_ptr();
+
+   if (string_is_empty(url))
+      return -1;
+   /* directory_ptr: where the cursor goes back to on Back. */
+   return generic_action_ok_displaylist_push(url, NULL, "", 0,
+         menu_st->selection_ptr, 0, ACTION_OK_DL_URL_CATALOG_LIST);
+}
+
+/* A folder or file in a game list: entry_idx is its index in the list
+ * of the level on top of the menu. Folders open one level deeper, files
+ * go through the normal Load from URL download and load. */
+static int action_ok_url_catalog_entry(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   struct menu_state *menu_st     = menu_state_get_ptr();
+   const char *menu_path          = NULL;
+   const struct url_catalog *cat;
+   file_list_t *stack;
+
+   if (!menu_st->entries.list
+         || !(stack = MENU_LIST_GET(menu_st->entries.list, 0)))
+      return -1;
+   menu_entries_get_last_stack(&menu_path, NULL, NULL, NULL, NULL);
+   if (     !(cat = task_url_catalog_get(stack->size, menu_path))
+         || entry_idx >= cat->count)
+      return -1;
+   task_push_url_content_load(cat->entries[entry_idx].url);
+   return 0;
+}
+
+static int action_ok_url_saved_servers(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   return generic_action_ok_displaylist_push(path, NULL, label, type,
+         idx, entry_idx, ACTION_OK_DL_URL_SERVERS_LIST);
+}
+
+/* Saved Servers: entry_idx is the server's index in url_servers. */
+static int action_ok_url_server_entry(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   char url[URL_CATALOG_URL_LEN];
+
+   if (!url_servers_get(entry_idx, url, sizeof(url)))
+      return -1;
+   task_push_url_content_load(url);
+   return 0;
+}
+
+static int action_ok_url_server_remove(const char *path,
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
+{
+   struct menu_state *menu_st = menu_state_get_ptr();
+
+   if (!url_servers_remove(entry_idx))
+      return -1;
+   /* The row above (the server itself), or the first row. */
+   menu_st->selection_ptr = (idx >= 1) ? idx - 1 : 0;
+   menu_st->flags        |= MENU_ST_FLAG_ENTRIES_NEED_REFRESH
+                          | MENU_ST_FLAG_PREVENT_POPULATE;
+   return 0;
+}
+
 static int action_ok_url_archive_account(const char *path,
       const char *label, unsigned type, size_t idx, size_t entry_idx)
 {
@@ -9360,6 +9449,10 @@ static int menu_cbs_init_bind_ok_compare_label(menu_file_list_cbs_t *cbs,
          {MENU_ENUM_LABEL_URL_ARCHIVE_ACCOUNT,                 action_ok_url_archive_account},
          {MENU_ENUM_LABEL_URL_FORGET_LOGINS,                   action_ok_url_forget_logins},
          {MENU_ENUM_LABEL_URL_CLEAR_CACHE,                     action_ok_url_clear_cache},
+         {MENU_ENUM_LABEL_URL_SAVED_SERVERS,                   action_ok_url_saved_servers},
+         {MENU_ENUM_LABEL_URL_CATALOG_ENTRY,                   action_ok_url_catalog_entry},
+         {MENU_ENUM_LABEL_URL_SERVER_ENTRY,                    action_ok_url_server_entry},
+         {MENU_ENUM_LABEL_URL_SERVER_REMOVE,                   action_ok_url_server_remove},
 #endif
          {MENU_ENUM_LABEL_DETECT_CORE_LIST_OK,                 action_ok_file_load_detect_core},
          {MENU_ENUM_LABEL_DETECT_CORE_LIST_OK_CURRENT_CORE,    action_ok_file_load_current_core},

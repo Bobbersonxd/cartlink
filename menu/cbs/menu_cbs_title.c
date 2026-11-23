@@ -26,6 +26,9 @@
 #include "../../retroarch.h"
 #include "../../core_option_manager.h"
 #include "../../core_info.h"
+#ifdef HAVE_NETWORKING
+#include "../../network/url_catalog.h"
+#endif
 
 #ifdef HAVE_CHEEVOS
 #include "../../cheevos/cheevos.h"
@@ -596,6 +599,17 @@ DEFAULT_TITLE_MACRO(action_get_user_accounts_youtube_list,      MENU_ENUM_LABEL_
 DEFAULT_TITLE_MACRO(action_get_user_accounts_twitch_list,       MENU_ENUM_LABEL_VALUE_ACCOUNTS_TWITCH)
 DEFAULT_TITLE_MACRO(action_get_user_accounts_facebook_list,     MENU_ENUM_LABEL_VALUE_ACCOUNTS_FACEBOOK)
 DEFAULT_TITLE_MACRO(action_get_download_core_content_list,      MENU_ENUM_LABEL_VALUE_DOWNLOAD_CORE_CONTENT)
+#ifdef HAVE_NETWORKING
+DEFAULT_TITLE_MACRO(action_get_title_url_saved_servers,         MENU_ENUM_LABEL_VALUE_URL_SAVED_SERVERS)
+
+/* "Load from URL" game list: path is the folder URL. */
+static int action_get_title_url_catalog(const char *path, const char *label,
+      unsigned menu_type, char *s, size_t len)
+{
+   url_catalog_title(s, len, path);
+   return 0;
+}
+#endif
 DEFAULT_TITLE_MACRO(action_get_download_core_system_files_list, MENU_ENUM_LABEL_VALUE_DOWNLOAD_CORE_SYSTEM_FILES)
 DEFAULT_TITLE_MACRO(action_get_user_accounts_list,              MENU_ENUM_LABEL_VALUE_ACCOUNTS_LIST)
 DEFAULT_TITLE_MACRO(action_get_core_list,                       MENU_ENUM_LABEL_VALUE_CORE_LIST)
@@ -1851,6 +1865,8 @@ int menu_cbs_init_bind_title(menu_file_list_cbs_t *cbs,
 #endif
 #ifdef HAVE_NETWORKING
       {MENU_ENUM_LABEL_DEFERRED_DROPDOWN_BOX_LIST_NETPLAY_MITM_SERVER,                      action_get_title_dropdown_item},
+      {MENU_ENUM_LABEL_DEFERRED_URL_CATALOG_LIST,                                           action_get_title_url_catalog},
+      {MENU_ENUM_LABEL_DEFERRED_URL_SERVERS_LIST,                                           action_get_title_url_saved_servers},
 #endif
       {MENU_ENUM_LABEL_DEFERRED_RPL_ENTRY_ACTIONS,                                          action_get_quick_menu_views_settings_list},
       {MENU_ENUM_LABEL_DEFERRED_PLAYLIST_LIST,                                              action_get_title_deferred_playlist_list},

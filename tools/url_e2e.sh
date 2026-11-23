@@ -10,6 +10,8 @@
 #   Run 2: the same URL again is a cache hit (no new request)
 #   Run L: a URL that needs a login exits 1 with a hint
 #   Run S: the same URL with a saved login in url_logins.cfg downloads
+#   Run C: a game-list (folder) URL on the command line exits 1 with
+#          "open it from the menu", caches nothing, saves no server
 #   Run 3: netplay, host and client both loading the same URL
 #   Run 4: a media URL (live.mp4) still takes the old media path
 #   Run M: an extensionless stream URL with a media core (-L ...ffmpeg...)
@@ -274,6 +276,22 @@ if [ -n "$cached" ] && [ "$(wc -c < "$cached")" -eq 8192 ] \
    pass "run S: saved login used, $(basename "$cached") downloaded"
 else
    fail "run S: saved login (exit $rc, see $WORK/runS.log)"
+fi
+
+# ------------------------------------------------- run C: game list
+
+PC=$(make_profile catalog)
+ra "$PC" "$WORK/runC.log" -L "$CORE" "http://127.0.0.1:$AUTH_PORT/cat/" \
+   --max-frames=30
+rc=$?
+cfiles=$(find "$PC/assets/url_cache" -type f 2>/dev/null | wc -l)
+if [ $rc -eq 1 ] && grep -q \
+      "This link is a game list. Open it from the menu: Load Content > Load from URL." \
+      "$WORK/runC.log.out" \
+      && [ "$cfiles" -eq 0 ] && [ ! -e "$PC/url_servers.cfg" ]; then
+   pass "run C: game list URL refused on the command line (exit $rc)"
+else
+   fail "run C: game list (exit $rc, cache files $cfiles, see $WORK/runC.log.out)"
 fi
 
 # ------------------------------------------------- run 3: netplay

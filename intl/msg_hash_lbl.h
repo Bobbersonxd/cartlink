@@ -1569,6 +1569,30 @@ MSG_HASH(
    "url_clear_cache"
    )
 MSG_HASH(
+   MENU_ENUM_LABEL_URL_SAVED_SERVERS,
+   "url_saved_servers"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_DEFERRED_URL_CATALOG_LIST,
+   "deferred_url_catalog_list"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_DEFERRED_URL_SERVERS_LIST,
+   "deferred_url_servers_list"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_URL_CATALOG_ENTRY,
+   "url_catalog_entry"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_URL_SERVER_ENTRY,
+   "url_server_entry"
+   )
+MSG_HASH(
+   MENU_ENUM_LABEL_URL_SERVER_REMOVE,
+   "url_server_remove"
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_DOWNLOAD_CORE_CONTENT,
    "download_core_content"
    )

@@ -179,6 +179,10 @@ enum
    ACTION_OK_DL_CORE_CONTENT_DIRS_LIST,
    ACTION_OK_DL_CORE_CONTENT_DIRS_SUBDIR_LIST,
    ACTION_OK_DL_CORE_SYSTEM_FILES_LIST,
+#ifdef HAVE_NETWORKING
+   ACTION_OK_DL_URL_CATALOG_LIST,
+   ACTION_OK_DL_URL_SERVERS_LIST,
+#endif
    ACTION_OK_DL_DEFERRED_LOAD_DISC_LIST,
    ACTION_OK_DL_DEFERRED_DUMP_DISC_LIST,
    ACTION_OK_DL_DEFERRED_CORE_LIST,
@@ -273,6 +277,10 @@ int action_ok_path_use_directory(const char *path,
 /* "Load from URL": loads dir/name the way the file browser loads a
  * file (core detection, core choice list, history). Main thread only. */
 int action_ok_url_content_load_file(const char *dir, const char *name);
+
+/* "Load from URL" game list: pushes a menu level showing the list
+ * stored for url (task_url_catalog_get). Main thread only. */
+int action_ok_url_catalog_push(const char *url);
 #endif
 
 void input_keyboard_mapping_bits(unsigned mode, unsigned key);

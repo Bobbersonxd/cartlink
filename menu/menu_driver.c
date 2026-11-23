@@ -1276,6 +1276,11 @@ static void menu_list_pop_stack(const menu_ctx_driver_t *menu_driver_ctx,
       }
 
       file_list_pop(menu_list, directory_ptr);
+#ifdef HAVE_NETWORKING
+      /* "Load from URL" game lists of the levels just left. */
+      if (idx == 0)
+         task_url_catalog_prune(menu_list->size);
+#endif
       if (  menu_driver_ctx &&
             menu_driver_ctx->list_set_selection)
          menu_driver_ctx->list_set_selection(menu_userdata,
@@ -1342,6 +1347,10 @@ static void menu_list_free(const menu_ctx_driver_t *menu_driver_ctx,
 {
    if (!menu_list)
       return;
+
+#ifdef HAVE_NETWORKING
+   task_url_catalog_prune(0);
+#endif
 
    if (menu_list->menu_stack)
    {

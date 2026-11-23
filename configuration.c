@@ -37,6 +37,7 @@
 #include "configuration.h"
 #ifdef HAVE_NETWORKING
 #include "network/url_logins.h"
+#include "network/url_servers.h"
 #endif
 #include "content.h"
 #include "config.def.h"
@@ -3481,6 +3482,7 @@ void config_load(void *data)
       /* "Load from URL" logins live next to retroarch.cfg, never in it. */
       char cfg_dir[PATH_MAX_LENGTH];
       char logins_path[PATH_MAX_LENGTH];
+      char servers_path[PATH_MAX_LENGTH];
       const char *cfg_path = path_get(RARCH_PATH_CONFIG);
 
       if (!string_is_empty(cfg_path))
@@ -3489,9 +3491,16 @@ void config_load(void *data)
          fill_pathname_join_special(logins_path, cfg_dir,
                "url_logins.cfg", sizeof(logins_path));
          url_logins_set_path(logins_path);
+         /* Saved Servers: URLs only, in their own file. */
+         fill_pathname_join_special(servers_path, cfg_dir,
+               "url_servers.cfg", sizeof(servers_path));
+         url_servers_set_path(servers_path);
       }
       else
+      {
          url_logins_set_path(NULL);
+         url_servers_set_path(NULL);
+      }
    }
 #endif
 }

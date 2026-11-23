@@ -1045,6 +1045,24 @@ static void test_catalog_parent(void)
    EXPECT(!url_catalog_parent(out, sizeof(out), "not a url"));
 }
 
+static void test_catalog_title(void)
+{
+   char out[256];
+   char tiny[8];
+   url_catalog_title(out, sizeof(out), "http://127.0.0.1:8080/cat/");
+   EXPECT_STR(out, "127.0.0.1:8080/cat/");
+   url_catalog_title(out, sizeof(out),
+         "https://user:pw@Games.example/cat/Game%20Boy/?x=1#y");
+   EXPECT_STR(out, "Games.example/cat/Game Boy/");
+   /* Encoded control characters and bad escapes are not shown raw. */
+   url_catalog_title(out, sizeof(out), "http://h/a%0Ab%zz%2/");
+   EXPECT_STR(out, "h/ab%zz%2/");
+   url_catalog_title(out, sizeof(out), "not a url");
+   EXPECT_STR(out, "");
+   url_catalog_title(tiny, sizeof(tiny), "http://hostname/long/");
+   EXPECT_STR(tiny, "hostnam");
+}
+
 /* Saved Servers: each test gets its own temp file. */
 static bool servers_temp(char *dir, char *path, size_t len)
 {
@@ -1296,6 +1314,7 @@ int main(void)
    test_catalog_parse_empty();
    test_catalog_parse_cap();
    test_catalog_parent();
+   test_catalog_title();
    test_servers_add_get();
    test_servers_dedupe();
    test_servers_remove();

@@ -477,4 +477,74 @@ bool url_catalog_parent(char *out, size_t len, const char *url)
    return true;
 }
 
+static int cat_hex(char c)
+{
+   if (c >= '0' && c <= '9')
+      return c - '0';
+   if (c >= 'a' && c <= 'f')
+      return c - 'a' + 10;
+   if (c >= 'A' && c <= 'F')
+      return c - 'A' + 10;
+   return -1;
+}
+
+void url_catalog_title(char *out, size_t len, const char *url)
+{
+   const char *host = url ? strstr(url, "://") : NULL;
+   const char *end;
+   const char *at;
+   const char *p;
+   size_t n = 0;
+   bool cut = false;
+
+   if (!out || !len)
+      return;
+   out[0] = '\0';
+   if (!host || host == url)
+      return;
+   host += 3;
+   end   = host + strcspn(host, "?#");
+   /* Login part: "user:pass@" before the first '/'. */
+   at    = memchr(host, '@', strcspn(host, "/?#"));
+   if (at)
+      host = at + 1;
+   if (host >= end || *host == '/')
+      return;
+
+   for (p = host; p < end; p++)
+   {
+      unsigned char c = (unsigned char)*p;
+      if (     c == '%' && end - p > 2
+            && cat_hex(p[1]) >= 0 && cat_hex(p[2]) >= 0)
+      {
+         c  = (unsigned char)(cat_hex(p[1]) * 16 + cat_hex(p[2]));
+         p += 2;
+      }
+      if (c < 0x20 || c == 0x7f)
+         continue;
+      if (n + 1 >= len)
+      {
+         cut = true;
+         break;
+      }
+      out[n++] = (char)c;
+   }
+   /* Do not end inside a UTF-8 sequence. */
+   if (cut && n > 0)
+   {
+      size_t k = n;
+      while (k > 0 && ((unsigned char)out[k - 1] & 0xC0) == 0x80)
+         k--;
+      if (k > 0 && ((unsigned char)out[k - 1] & 0x80))
+      {
+         unsigned char lead = (unsigned char)out[k - 1];
+         size_t need = (lead >= 0xF0) ? 4 : (lead >= 0xE0) ? 3
+            : (lead >= 0xC0) ? 2 : 1;
+         if (n - (k - 1) < need)
+            n = k - 1;
+      }
+   }
+   out[n] = '\0';
+}
+
 #endif /* HAVE_NETWORKING */

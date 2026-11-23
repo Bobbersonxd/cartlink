@@ -112,6 +112,20 @@ bool task_push_netplay_nat_close(void *data);
  * like the file browser does. False if a download is already running. */
 bool task_push_url_content_load(const char *url);
 
+/* "Load from URL" game lists. A link that answers with a folder
+ * listing opens a menu level for it; the list is kept here, one per
+ * open level, keyed by the menu stack depth of that level (stack size
+ * while it is on top) and its folder URL. Main thread only. */
+struct url_catalog;
+
+/* The list for the level at depth showing url, or NULL. */
+const struct url_catalog *task_url_catalog_get(size_t depth,
+      const char *url);
+
+/* Frees the lists of every level deeper than depth (levels the menu
+ * has left). 0 frees all. */
+void task_url_catalog_prune(size_t depth);
+
 /* Command line: downloads url into the url_cache folder, blocking, with
  * progress in the log. True with out_path set to the cached file;
  * false after printing why (e.g. a login is needed). */

@@ -380,6 +380,30 @@ MSG_HASH(
    "Could not clear the URL cache"
    )
 MSG_HASH(
+   MENU_ENUM_LABEL_VALUE_URL_SAVED_SERVERS,
+   "Saved Servers"
+   )
+MSG_HASH(
+   MENU_ENUM_SUBLABEL_URL_SAVED_SERVERS,
+   "Game servers you have opened. Pick one to browse it."
+   )
+MSG_HASH(
+   MSG_URL_CATALOG_EMPTY,
+   "This folder is empty."
+   )
+MSG_HASH(
+   MSG_URL_CATALOG_TRUNCATED,
+   "Showing the first 4096 items."
+   )
+MSG_HASH(
+   MSG_URL_SERVER_REMOVE,
+   "Remove this server"
+   )
+MSG_HASH(
+   MSG_URL_CATALOG_CLI,
+   "This link is a game list. Open it from the menu: Load Content > Load from URL."
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_VALUE_OPEN_ARCHIVE,
    "Browse Archive"
    )

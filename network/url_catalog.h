@@ -67,6 +67,12 @@ void url_catalog_free(struct url_catalog *c);
  * file, or one level up from a folder. False at the server root. */
 bool url_catalog_parent(char *out, size_t len, const char *url);
 
+/* Menu title for a catalog URL: host[:port] and path, without scheme,
+ * login, query or fragment, percent-decoded. Decoded control
+ * characters are dropped; a bad escape stays as written. Cut to fit
+ * (on a UTF-8 boundary). "" if url is not scheme://host. */
+void url_catalog_title(char *out, size_t len, const char *url);
+
 RETRO_END_DECLS
 
 #endif /* HAVE_NETWORKING */
