@@ -180,65 +180,6 @@ static bool uf_length_matches(const char *value, size_t len)
    return n == len;
 }
 
-/* Absolute URL for a Location value seen while fetching base:
- * absolute http(s), scheme-relative, absolute path, or relative path. */
-static bool uf_resolve_location(char *out, size_t len, const char *base,
-      const char *loc)
-{
-   const char *auth;
-   const char *path;
-   size_t n;
-
-   while (*loc == ' ' || *loc == '\t')
-      loc++;
-   if (!*loc)
-      return false;
-   if (strstr(loc, "://"))
-   {
-      if (     !string_starts_with_case_insensitive(loc, "http://")
-            && !string_starts_with_case_insensitive(loc, "https://"))
-         return false;
-      return strlcpy(out, loc, len) < len;
-   }
-
-   if (!(auth = strstr(base, "://")))
-      return false;
-   auth += 3;
-   if (loc[0] == '/' && loc[1] == '/')
-   {
-      n = (size_t)(auth - base) - 2; /* "http:" */
-      if (n + strlen(loc) + 1 > len)
-         return false;
-      memcpy(out, base, n);
-      out[n] = '\0';
-      return strlcat(out, loc, len) < len;
-   }
-
-   path = auth;
-   while (*path && *path != '/' && *path != '?' && *path != '#')
-      path++;
-   if (loc[0] == '/')
-      n = (size_t)(path - base);
-   else
-   {
-      /* Directory of the current path (query and fragment dropped). */
-      const char *end   = path + strcspn(path, "?#");
-      const char *slash = NULL;
-      const char *p;
-      for (p = path; p < end; p++)
-         if (*p == '/')
-            slash = p;
-      n = slash ? (size_t)(slash + 1 - base) : (size_t)(path - base);
-   }
-   if (n + 2 > len)
-      return false;
-   memcpy(out, base, n);
-   out[n] = '\0';
-   if (loc[0] != '/' && (!n || out[n - 1] != '/'))
-      strlcat(out, "/", len);
-   return strlcat(out, loc, len) < len;
-}
-
 /* Blocking GET. Fills r; returns false only if no request could be
  * made at all (bad URL / out of memory). Requests that carry a login
  * or keys (non-empty headers) over https need a verified certificate:
@@ -532,7 +473,7 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
          uf_set_err(err, err_len, "Too many redirects.");
          goto end;
       }
-      if (!uf_resolve_location(next, sizeof(next), cur, loc))
+      if (!url_content_resolve(next, sizeof(next), cur, loc))
       {
          uf_set_err(err, err_len, "Bad redirect.");
          goto end;

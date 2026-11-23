@@ -63,6 +63,13 @@ bool url_content_name_from_disposition(char *out, size_t len,
 void url_content_cache_name(char *out, size_t len,
       const char *fixed_url, const char *name_or_null);
 
+/* Absolute URL for ref (a link or Location value) seen at base:
+ * absolute http(s), scheme-relative, absolute path, or relative path
+ * (joined to base's folder). Dot segments are NOT removed. False for
+ * other schemes, an empty ref, or if it does not fit. */
+bool url_content_resolve(char *out, size_t len, const char *base,
+      const char *ref);
+
 /* Lower-case host of a URL, without userinfo or port. */
 void url_content_host(char *out, size_t len, const char *url);
 

@@ -16,6 +16,7 @@ CFLAGS  += -std=gnu89 -Wall -Wextra -Wno-unused-parameter -Wno-implicit-fallthro
 
 SRCS := test_url_content.c \
         ../../network/url_content.c \
+        ../../network/url_catalog.c \
         ../../frontend/clipboard.c \
         $(LRC)/formats/json/rjson.c \
         $(LRC)/streams/interface_stream.c \
@@ -87,7 +88,7 @@ CERTS := certs/ca.pem certs/srv.pem certs/srv.key
 
 all: $(BIN) $(FETCH_BIN)
 
-$(BIN): $(SRCS) ../../network/url_content.h ../../network/url_logins.h ../../frontend/clipboard.h
+$(BIN): $(SRCS) ../../network/url_content.h ../../network/url_catalog.h ../../network/url_logins.h ../../frontend/clipboard.h
 	$(CC) $(CFLAGS) -o $@ $(SRCS)
 
 test: $(BIN)

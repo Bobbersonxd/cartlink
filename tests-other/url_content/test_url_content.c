@@ -22,6 +22,7 @@
 
 #include "../../network/url_content.h"
 #include "../../network/url_logins.h"
+#include "../../network/url_catalog.h"
 #include "../../frontend/clipboard.h"
 
 static int g_checks   = 0;
@@ -762,6 +763,265 @@ static void test_clipboard_clean(void)
    EXPECT_STR(s, "plain");
 }
 
+#define CAT_BASE "https://h.example/games/"
+
+static bool cat_parse(const char *json, struct url_catalog *c)
+{
+   return url_catalog_parse(json, strlen(json), CAT_BASE, c);
+}
+
+static bool cat_parse_at(const char *json, const char *base,
+      struct url_catalog *c)
+{
+   return url_catalog_parse(json, strlen(json), base, c);
+}
+
+static void test_content_resolve(void)
+{
+   char out[256];
+   EXPECT(url_content_resolve(out, sizeof(out), "https://h/a/b.gb", "c.gb"));
+   EXPECT_STR(out, "https://h/a/c.gb");
+   EXPECT(url_content_resolve(out, sizeof(out), "https://h/a/", "/x"));
+   EXPECT_STR(out, "https://h/x");
+   EXPECT(url_content_resolve(out, sizeof(out), "https://h/a/", "//o/y"));
+   EXPECT_STR(out, "https://o/y");
+   EXPECT(url_content_resolve(out, sizeof(out), "https://h", "z"));
+   EXPECT_STR(out, "https://h/z");
+   EXPECT(!url_content_resolve(out, sizeof(out), "https://h/", "ftp://x/"));
+   EXPECT(!url_content_resolve(out, sizeof(out), "https://h/", ""));
+}
+
+static void test_catalog_parse_basic(void)
+{
+   struct url_catalog c;
+   EXPECT(cat_parse("[{\"name\":\"NES\",\"is_dir\":true,\"url\":\"./NES/\",\"size\":0},"
+         "{\"name\":\"b.gb\",\"is_dir\":false,\"url\":\"./b.gb\",\"size\":10},"
+         "{\"name\":\"A.gb\",\"is_dir\":false,\"url\":\"./A.gb\",\"size\":5}]", &c));
+   EXPECT(c.count == 3);
+   EXPECT(!c.truncated);
+   EXPECT_STR(c.base, CAT_BASE);
+   if (c.count == 3)
+   {
+      EXPECT_STR(c.entries[0].name, "NES");
+      EXPECT(c.entries[0].is_dir);
+      EXPECT_STR(c.entries[0].url, "https://h.example/games/NES/");
+      EXPECT_STR(c.entries[1].name, "A.gb");
+      EXPECT(!c.entries[1].is_dir);
+      EXPECT(c.entries[1].size == 5);
+      EXPECT_STR(c.entries[1].url, "https://h.example/games/A.gb");
+      EXPECT_STR(c.entries[2].name, "b.gb");
+      EXPECT(c.entries[2].size == 10);
+   }
+   url_catalog_free(&c);
+   EXPECT(c.entries == NULL && c.count == 0);
+
+   /* Real Caddy fields beyond the four are ignored; absolute same-site
+    * URLs are fine. */
+   EXPECT(cat_parse("[{\"name\":\"z.gb\",\"size\":7,\"url\":\"https://h.example/games/z.gb\","
+         "\"mod_time\":\"2026-11-22T10:00:00Z\",\"mode\":420,\"is_dir\":false,"
+         "\"is_symlink\":false,\"extra\":{\"k\":[1,{\"name\":\"q\"}]}}]", &c));
+   EXPECT(c.count == 1);
+   if (c.count == 1)
+   {
+      EXPECT_STR(c.entries[0].url, "https://h.example/games/z.gb");
+      EXPECT(c.entries[0].size == 7);
+   }
+   url_catalog_free(&c);
+}
+
+static void test_catalog_parse_sort(void)
+{
+   struct url_catalog c;
+   EXPECT(cat_parse("[{\"name\":\"c.gb\",\"is_dir\":false,\"url\":\"./c.gb\"},"
+         "{\"name\":\"zed\",\"is_dir\":true,\"url\":\"./zed/\"},"
+         "{\"name\":\"B.gb\",\"is_dir\":false,\"url\":\"./B.gb\"},"
+         "{\"name\":\"Alpha\",\"is_dir\":true,\"url\":\"./Alpha/\"},"
+         "{\"name\":\"a.gb\",\"is_dir\":false,\"url\":\"./a.gb\"}]", &c));
+   EXPECT(c.count == 5);
+   if (c.count == 5)
+   {
+      EXPECT_STR(c.entries[0].name, "Alpha");
+      EXPECT_STR(c.entries[1].name, "zed");
+      EXPECT_STR(c.entries[2].name, "a.gb");
+      EXPECT_STR(c.entries[3].name, "B.gb");
+      EXPECT_STR(c.entries[4].name, "c.gb");
+   }
+   url_catalog_free(&c);
+}
+
+static void test_catalog_parse_unsafe(void)
+{
+   struct url_catalog c;
+   EXPECT(cat_parse("["
+         "{\"name\":\"e.gb\",\"is_dir\":false,\"url\":\"https://evil.example/x.gb\"},"
+         "{\"name\":\"s.gb\",\"is_dir\":false,\"url\":\"http://h.example/games/x.gb\"},"
+         "{\"name\":\"p.gb\",\"is_dir\":false,\"url\":\"https://h.example:8443/games/x.gb\"},"
+         "{\"name\":\"r.gb\",\"is_dir\":false,\"url\":\"//evil.example/games/x.gb\"},"
+         "{\"name\":\"u.gb\",\"is_dir\":false,\"url\":\"../secret.gb\"},"
+         "{\"name\":\"v.gb\",\"is_dir\":false,\"url\":\"./a/../../x\"},"
+         "{\"name\":\"w.gb\",\"is_dir\":false,\"url\":\"/other/x.gb\"},"
+         "{\"name\":\"x.gb\",\"is_dir\":false,\"url\":\"./%2e%2e/x.gb\"},"
+         "{\"name\":\"self\",\"is_dir\":true,\"url\":\"./\"},"
+         "{\"name\":\"bad\\nname.gb\",\"is_dir\":false,\"url\":\"./n.gb\"},"
+         "{\"name\":\"\",\"is_dir\":false,\"url\":\"./m.gb\"},"
+         "{\"name\":\"ok.gb\",\"is_dir\":false,\"url\":\"./sub/../ok.gb\"}"
+         "]", &c));
+   EXPECT(c.count == 1);
+   if (c.count == 1)
+   {
+      EXPECT_STR(c.entries[0].name, "ok.gb");
+      EXPECT_STR(c.entries[0].url, "https://h.example/games/ok.gb");
+   }
+   url_catalog_free(&c);
+}
+
+static void test_catalog_parse_names(void)
+{
+   struct url_catalog c;
+   char *json;
+   char *p;
+   int i;
+
+   EXPECT(cat_parse("[{\"name\":\"Pok\\u00e9mon.gbc\",\"is_dir\":false,"
+         "\"url\":\"./Pok%C3%A9mon.gbc\"}]", &c));
+   EXPECT(c.count == 1);
+   if (c.count == 1)
+   {
+      EXPECT_STR(c.entries[0].name, "Pok\xc3\xa9mon.gbc");
+      EXPECT_STR(c.entries[0].url, "https://h.example/games/Pok%C3%A9mon.gbc");
+   }
+   url_catalog_free(&c);
+
+   /* raw UTF-8 in the JSON works the same as \u escapes */
+   EXPECT(cat_parse("[{\"name\":\"Pok\xc3\xa9mon.gbc\",\"is_dir\":false,"
+         "\"url\":\"./Pok%C3%A9mon.gbc\"}]", &c));
+   EXPECT(c.count == 1);
+   if (c.count == 1)
+      EXPECT_STR(c.entries[0].name, "Pok\xc3\xa9mon.gbc");
+   url_catalog_free(&c);
+
+   /* 400 two-byte characters: cut to 254 bytes, never mid-character. */
+   json = (char*)malloc(2048);
+   p    = json;
+   p   += sprintf(p, "[{\"name\":\"");
+   for (i = 0; i < 400; i++)
+      p += sprintf(p, "\xc3\xa9");
+   sprintf(p, "\",\"is_dir\":false,\"url\":\"./long.gb\"},"
+         "{\"name\":\"%0400d\",\"is_dir\":false,\"url\":\"./long2.gb\"}]", 0);
+   EXPECT(cat_parse(json, &c));
+   EXPECT(c.count == 2);
+   if (c.count == 2)
+   {
+      size_t l0 = strlen(c.entries[0].name);
+      size_t l1 = strlen(c.entries[1].name);
+      /* "000..." sorts before "\xc3..." */
+      EXPECT(l0 == 255);
+      EXPECT(l1 == 254);
+      EXPECT((unsigned char)c.entries[1].name[l1 - 2] == 0xc3);
+      EXPECT((unsigned char)c.entries[1].name[l1 - 1] == 0xa9);
+   }
+   url_catalog_free(&c);
+   free(json);
+}
+
+static void test_catalog_parse_edges(void)
+{
+   struct url_catalog c;
+   char *json = (char*)malloc(URL_CATALOG_URL_LEN + 256);
+   char *p    = json;
+   int i;
+
+   /* a url too long for an entry skips that entry only */
+   p += sprintf(p, "[{\"name\":\"l.gb\",\"is_dir\":false,\"url\":\"./");
+   for (i = 0; i < URL_CATALOG_URL_LEN; i++)
+      *p++ = 'a';
+   sprintf(p, "\"},{\"name\":\"k.gb\",\"is_dir\":false,\"url\":\"./k.gb\"}]");
+   EXPECT(cat_parse(json, &c));
+   EXPECT(c.count == 1);
+   url_catalog_free(&c);
+   free(json);
+
+   /* base without a trailing slash: its folder is the parent */
+   EXPECT(cat_parse_at("[{\"name\":\"k.gb\",\"is_dir\":false,\"url\":\"k.gb\"},"
+         "{\"name\":\"j.gb\",\"is_dir\":false,\"url\":\"/top/j.gb\"}]",
+         "https://h.example/top/list?x=1", &c));
+   EXPECT(c.count == 2);
+   if (c.count == 2)
+      EXPECT_STR(c.entries[1].url, "https://h.example/top/k.gb");
+   url_catalog_free(&c);
+
+   /* host case does not matter; a bare-host base has the root folder */
+   EXPECT(cat_parse_at("[{\"name\":\"k.gb\",\"is_dir\":false,"
+         "\"url\":\"HTTPS://H.example/k.gb\"}]", "https://h.example", &c));
+   EXPECT(c.count == 1);
+   url_catalog_free(&c);
+}
+
+static void test_catalog_parse_not_listing(void)
+{
+   struct url_catalog c;
+   EXPECT(!cat_parse("{\"a\":1}", &c));
+   EXPECT(c.entries == NULL && c.count == 0);
+   EXPECT(!cat_parse("[1,2]", &c));
+   EXPECT(!cat_parse("[{\"name\":\"x\"}]", &c));
+   EXPECT(!cat_parse("[{\"name\":\"x\",\"is_dir\":\"no\",\"url\":\"./x\"}]", &c));
+   EXPECT(!cat_parse("[{\"name\":\"x\",\"is_dir\":false,\"url\":\"./x\"},3]", &c));
+   EXPECT(!cat_parse("[[{\"name\":\"x\",\"is_dir\":false,\"url\":\"./x\"}]]", &c));
+   EXPECT(!cat_parse("[{\"name\":\"x\",\"is_dir\":false,\"url\":\"./x\"}", &c));
+   EXPECT(!cat_parse("not json", &c));
+   EXPECT(!cat_parse("", &c));
+   EXPECT(!url_catalog_parse(NULL, 0, CAT_BASE, &c));
+   EXPECT(c.entries == NULL && c.count == 0);
+}
+
+static void test_catalog_parse_empty(void)
+{
+   struct url_catalog c;
+   EXPECT(cat_parse("[]", &c));
+   EXPECT(c.count == 0);
+   EXPECT(!c.truncated);
+   url_catalog_free(&c);
+   EXPECT(cat_parse(" [ ] ", &c));
+   url_catalog_free(&c);
+}
+
+static void test_catalog_parse_cap(void)
+{
+   struct url_catalog c;
+   size_t cap = 5000 * 64 + 16;
+   char *json = (char*)malloc(cap);
+   char *p    = json;
+   int i;
+
+   *p++ = '[';
+   for (i = 0; i < 5000; i++)
+      p += sprintf(p, "%s{\"name\":\"g%05d.gb\",\"is_dir\":false,\"url\":\"./g%05d.gb\"}",
+            i ? "," : "", i, i);
+   *p++ = ']';
+   *p   = '\0';
+   EXPECT(cat_parse(json, &c));
+   EXPECT(c.count == URL_CATALOG_MAX);
+   EXPECT(c.truncated);
+   if (c.count == URL_CATALOG_MAX)
+      EXPECT_STR(c.entries[0].name, "g00000.gb");
+   url_catalog_free(&c);
+   free(json);
+}
+
+static void test_catalog_parent(void)
+{
+   char out[256];
+   EXPECT(url_catalog_parent(out, sizeof(out), "https://h/games/NES/"));
+   EXPECT_STR(out, "https://h/games/");
+   EXPECT(url_catalog_parent(out, sizeof(out), "https://h/games/"));
+   EXPECT_STR(out, "https://h/");
+   EXPECT(url_catalog_parent(out, sizeof(out), "https://h/games/a.gb"));
+   EXPECT_STR(out, "https://h/games/");
+   EXPECT(!url_catalog_parent(out, sizeof(out), "https://h/"));
+   EXPECT(!url_catalog_parent(out, sizeof(out), "https://h"));
+   EXPECT(!url_catalog_parent(out, sizeof(out), "not a url"));
+}
+
 int main(void)
 {
    test_fix_link();
@@ -779,6 +1039,16 @@ int main(void)
    test_archive_login_parse();
    test_cli_should_fetch();
    test_clipboard_clean();
+   test_content_resolve();
+   test_catalog_parse_basic();
+   test_catalog_parse_sort();
+   test_catalog_parse_unsafe();
+   test_catalog_parse_names();
+   test_catalog_parse_edges();
+   test_catalog_parse_not_listing();
+   test_catalog_parse_empty();
+   test_catalog_parse_cap();
+   test_catalog_parent();
 
    if (g_failures)
    {

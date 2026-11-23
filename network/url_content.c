@@ -164,6 +164,63 @@ static const char *uc_path_end(const char *path)
    return path;
 }
 
+bool url_content_resolve(char *out, size_t len, const char *base,
+      const char *loc)
+{
+   const char *auth;
+   const char *path;
+   size_t n;
+
+   while (*loc == ' ' || *loc == '\t')
+      loc++;
+   if (!*loc)
+      return false;
+   if (strstr(loc, "://"))
+   {
+      if (     !uc_starts_with_ci(loc, "http://")
+            && !uc_starts_with_ci(loc, "https://"))
+         return false;
+      return strlcpy(out, loc, len) < len;
+   }
+
+   if (!(auth = strstr(base, "://")))
+      return false;
+   auth += 3;
+   if (loc[0] == '/' && loc[1] == '/')
+   {
+      n = (size_t)(auth - base) - 2; /* "http:" */
+      if (n + strlen(loc) + 1 > len)
+         return false;
+      memcpy(out, base, n);
+      out[n] = '\0';
+      return strlcat(out, loc, len) < len;
+   }
+
+   path = auth;
+   while (*path && *path != '/' && *path != '?' && *path != '#')
+      path++;
+   if (loc[0] == '/')
+      n = (size_t)(path - base);
+   else
+   {
+      /* Directory of the current path (query and fragment dropped). */
+      const char *end   = path + strcspn(path, "?#");
+      const char *slash = NULL;
+      const char *p;
+      for (p = path; p < end; p++)
+         if (*p == '/')
+            slash = p;
+      n = slash ? (size_t)(slash + 1 - base) : (size_t)(path - base);
+   }
+   if (n + 2 > len)
+      return false;
+   memcpy(out, base, n);
+   out[n] = '\0';
+   if (loc[0] != '/' && (!n || out[n - 1] != '/'))
+      strlcat(out, "/", len);
+   return strlcat(out, loc, len) < len;
+}
+
 /* True if host equals domain or is a subdomain of it */
 static bool uc_host_is(const char *host, const char *domain)
 {
