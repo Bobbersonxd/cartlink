@@ -8,7 +8,7 @@ is a small volunteer project: thank you for helping. Please follow the
 
 - Cartlink problems (Load from URL, game lists, Saved Servers, logins,
   the server kit in `tools/cartlink-server/`, the release builds): open
-  an issue at https://github.com/OWNER/cartlink/issues and fill in the
+  an issue at https://github.com/Bobbersonxd/cartlink/issues and fill in the
   template. Include `cartlink --version`.
 - Security problems: not as a public issue, see [SECURITY.md](SECURITY.md).
 - Problems that are also in upstream RetroArch or in a core (netplay,

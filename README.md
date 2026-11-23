@@ -7,10 +7,12 @@ history). Everything else, netplay included, works like RetroArch.
 
 The point: friends who load the same link get the exact same file, so
 normal netplay just works and nobody has to pass files around first.
+It is made for homebrew, freely licensed games, your own backups and your
+own home server.
 
 Cartlink is not made, endorsed or supported by the libretro team. All
 the emulation, menus and netplay are RetroArch's work; please report
-Cartlink problems [here](https://github.com/OWNER/cartlink/issues), not
+Cartlink problems [here](https://github.com/Bobbersonxd/cartlink/issues), not
 to libretro. Licence: GNU GPL v3 or later, the same as RetroArch
 (see [COPYING](COPYING)). The files Cartlink changed are listed in
 [NOTICE-CARTLINK.md](NOTICE-CARTLINK.md).
@@ -28,8 +30,9 @@ to libretro. Licence: GNU GPL v3 or later, the same as RetroArch
 - **Your own server or NAS**: a login popup for sites that ask for one,
   saved per site (`https://host:port`). Logins are **only ever sent over
   https with a valid certificate**, never over plain http.
-- **archive.org sign-in** for items that need an account (uses
-  archive.org's public API; respect their terms).
+- **archive.org sign-in** for downloading from your own archive.org
+  account (uses archive.org's public API; follow archive.org's terms and
+  each item's licence).
 - **Game lists**: a link to a folder served as a listing (Caddy's
   `file_server browse`) opens as a menu of games and subfolders. Folders
   you open are kept under **Saved Servers**.
@@ -58,9 +61,10 @@ to libretro. Licence: GNU GPL v3 or later, the same as RetroArch
 3. Press Enter. "Downloading ..." shows while it downloads, then a core
    is picked (or you are asked) just like for a file on disk.
 
-Google Drive links get Google's "can't scan this file for viruses" page
-skipped on purpose (that is how big files download); Cartlink's own
-program and archive checks still run.
+Large Google Drive files: Google cannot virus-scan files above its size
+limit and shows a notice instead of the file. Cartlink downloads the file
+directly and runs its own program and archive checks on it, like every
+other download. Only use links from people you trust.
 
 ### Fingerprints (`#sha256=`)
 Whoever shares a link can add the file's SHA-256 so everyone is sure to
@@ -264,10 +268,9 @@ Both build only what is committed (`git archive HEAD`) and write
 the binaries: publish it with them (GPLv3 needs the source to go with
 every binary). The version is in `CARTLINK_VERSION`. A tree with
 uncommitted or untracked files is refused; `--dirty` builds it anyway
-for a local test and names the files `-DIRTY`. Set `CARTLINK_REPO_URL`
-to the public repo; while it is the `OWNER` placeholder a release
-build is refused (`--allow-placeholder` makes a `-PLACEHOLDER` test
-build). `build/` and `dist/` are git-ignored.
+for a local test and names the files `-DIRTY`. `CARTLINK_REPO_URL`
+(written into `SOURCE.txt`) defaults to this repo; set it to your own
+repo if you publish a fork. `build/` and `dist/` are git-ignored.
 
 The Linux release is built in an Ubuntu 22.04 container with rootless
 `podman` (`tools/linux-build/Containerfile`), so it runs with glibc

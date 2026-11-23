@@ -14,7 +14,7 @@
 # refused; --allow-placeholder builds anyway and adds -PLACEHOLDER to
 # the names (a local test build with a dead source link).
 
-CARTLINK_REPO_URL=${CARTLINK_REPO_URL:-https://github.com/OWNER/cartlink}
+CARTLINK_REPO_URL=${CARTLINK_REPO_URL:-https://github.com/Bobbersonxd/cartlink}
 
 LOW="nice -n 19"
 command -v ionice >/dev/null 2>&1 && LOW="$LOW ionice -c3"

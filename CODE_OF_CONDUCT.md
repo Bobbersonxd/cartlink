@@ -16,7 +16,7 @@ people who don't follow this, for as long as they see fit.
 ## Reporting
 
 To report a problem with someone's behaviour, open an issue at
-https://github.com/OWNER/cartlink/issues, or, if it should not be
+https://github.com/Bobbersonxd/cartlink/issues, or, if it should not be
 public, use the private report form described in
 [SECURITY.md](SECURITY.md) (the repository's **Security** tab →
 **Report a vulnerability**) and say that it is a conduct report. Reports

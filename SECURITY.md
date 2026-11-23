@@ -10,7 +10,7 @@ fingerprints, certificate checks, the URL cache), the home server kit in
 Please **don't open a public issue** for a security problem. Use GitHub's
 private reporting instead: the repository's **Security** tab →
 **Report a vulnerability**
-(https://github.com/OWNER/cartlink/security/advisories/new).
+(https://github.com/Bobbersonxd/cartlink/security/advisories/new).
 
 Include what you found, how to reproduce it, and which version
 (`cartlink --version`). Don't include real passwords, server names or
