@@ -528,6 +528,13 @@ bool url_content_split_fingerprint(char *url_out, size_t len,
    if (n >= len)
       goto fail;
 
+   if (     hash
+         && !uc_starts_with_ci(hash + 1, "sha256=")
+         && (     uc_find_ci(hash + 1, "sha256")
+               || uc_find_ci(hash + 1, "sha-256")
+               || uc_find_ci(hash + 1, "sha_256")))
+      goto fail; /* a fingerprint in another form: fail closed (R8) */
+
    if (hash && uc_starts_with_ci(hash + 1, "sha256="))
    {
       const char *hex = hash + 1 + 7; /* "sha256=" */

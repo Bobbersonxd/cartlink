@@ -1586,6 +1586,27 @@ static void test_split_fingerprint(void)
          "http://h/g.gb#sha256=" FP_HEX "&x=1"));
    EXPECT(!url_content_split_fingerprint(out, sizeof(out), fp, &has,
          "http://h/g.gb#sha256="));
+   /* sha256 mentioned in any other form: refused too (R8: fail
+    * closed), never loaded without the check. */
+   EXPECT(!url_content_split_fingerprint(out, sizeof(out), fp, &has,
+         "http://h/g.gb#x&sha256=" FP_HEX));
+   EXPECT(!has);
+   EXPECT(!url_content_split_fingerprint(out, sizeof(out), fp, &has,
+         "http://h/g.gb#x=1&sha256=" FP_HEX));
+   EXPECT(!url_content_split_fingerprint(out, sizeof(out), fp, &has,
+         "http://h/g.gb#sha256:" FP_HEX));
+   EXPECT(!url_content_split_fingerprint(out, sizeof(out), fp, &has,
+         "http://h/g.gb#SHA-256=" FP_HEX));
+   EXPECT(!url_content_split_fingerprint(out, sizeof(out), fp, &has,
+         "http://h/g.gb#sha_256=" FP_HEX));
+   EXPECT(!url_content_split_fingerprint(out, sizeof(out), fp, &has,
+         "http://h/g.gb#sha256"));
+   EXPECT(!url_content_split_fingerprint(out, sizeof(out), fp, &has,
+         "http://h/g.gb#sha256=79a681"));
+   EXPECT(!url_content_split_fingerprint(out, sizeof(out), fp, &has,
+         "http://h/g.gb#page=2&Sha256=" FP_HEX));
+   EXPECT(!has);
+   EXPECT_STR(out, "");
 
    /* Does not fit: false, empty out. */
    EXPECT(!url_content_split_fingerprint(out, 8, fp, &has,
