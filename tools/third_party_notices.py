@@ -13,6 +13,7 @@
 # Usage: tools/third_party_notices.py <built source dir> <out file> windows|linux
 
 import glob
+import hashlib
 import os
 import re
 import sys
@@ -258,6 +259,25 @@ if PLATFORM == "windows":
                      "GNU GPL v3 with the GCC Runtime Library Exception 3.1, which\n"
                      "allows them to be linked into programs under any licence.\n"
                      "https://www.gnu.org/licenses/gcc-exception-3.1.html"))
+
+# Shipped next to the program (not compiled in): Mozilla's CA list.
+ca = read(src("media/cacert.pem"))
+m = re.search(r"Certificate data from Mozilla as of: ([^\n]+)", ca)
+if not m:
+    sys.exit("media/cacert.pem has no 'Certificate data from Mozilla as of' line")
+with open(src("media/cacert.pem"), "rb") as f:
+    ca_sha = hashlib.sha256(f.read()).hexdigest()
+sections.append(("cacert.pem, Mozilla's CA certificate list (MPL-2.0)",
+                 "cacert.pem, shipped next to the program, is the list of trusted\n"
+                 "certificate authorities from Mozilla's NSS (certdata.txt) as\n"
+                 "extracted by the curl project: https://curl.se/ca/cacert.pem\n"
+                 "(see https://curl.se/docs/caextract.html).\n"
+                 "Certificate data from Mozilla as of: %s\n"
+                 "SHA-256 of the file: %s\n"
+                 "It is unmodified and under the Mozilla Public License 2.0; its\n"
+                 "source form is the file itself. The licence:\n\n%s"
+                 % (m.group(1).strip(), ca_sha,
+                    read(src("media/cacert-MPL-2.0.txt")))))
 
 rule = "=" * 72
 head = ("Cartlink: third-party notices\n\n"

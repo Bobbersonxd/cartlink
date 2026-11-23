@@ -16,7 +16,8 @@ BASE = sys.argv[1] if len(sys.argv) > 1 else "69a4f0e"
 MBED = "deps/mbedtls/"
 OWN_DOCS = {"NOTICE-CARTLINK.md"}
 # Upstream files Cartlink replaced as a whole with its own text.
-REPLACED_PREFIX = (".github/", "README.md", "SECURITY.md")
+REPLACED_PREFIX = (".github/", "README.md", "SECURITY.md",
+                   "CODE_OF_CONDUCT.md", "CONTRIBUTING.md")
 
 
 def diff():
@@ -56,6 +57,14 @@ def main():
     w("`tools/cartlink-server/eff_short_wordlist_1.txt` is the EFF's, under")
     w("Creative Commons Attribution (see")
     w("[WORDLIST-LICENSE.txt](tools/cartlink-server/WORDLIST-LICENSE.txt)).")
+    w("`media/cacert.pem` (shipped next to the program in the release")
+    w("archives) is Mozilla's CA certificate list as extracted by curl")
+    w("(https://curl.se/ca/cacert.pem, checked against")
+    w("https://curl.se/ca/cacert.pem.sha256), unmodified, under the Mozilla")
+    w("Public License 2.0 ([cacert-MPL-2.0.txt](media/cacert-MPL-2.0.txt)).")
+    w("Its date is in its own header line \"Certificate data from Mozilla")
+    w("as of\". To update it, download both files again, check the hash and")
+    w("commit.")
     w("")
     w("Each upstream file listed below as modified has the line")
     w("\"Modified by Cartlink contributors, 2026\" near the top. Each new")

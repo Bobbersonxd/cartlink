@@ -2,9 +2,9 @@
 # Copyright (C) 2026 Cartlink contributors. GNU GPL v3 or later (see COPYING).
 # Cross-builds the 64-bit Windows cartlink.exe with MinGW-w64 on Linux
 # from the committed sources (`git archive HEAD`) and writes:
-#   cartlink-<version>-win64.zip      cartlink.exe, COPYING.txt,
-#                                     THIRD-PARTY-NOTICES.txt, SOURCE.txt,
-#                                     README-Cartlink.txt
+#   cartlink-<version>-win64.zip      cartlink.exe, cacert.pem,
+#                                     COPYING.txt, THIRD-PARTY-NOTICES.txt,
+#                                     SOURCE.txt, README-Cartlink.txt
 #   cartlink-<version>-source.tar.gz  the exact source it was built from
 # A tree with uncommitted or untracked files is refused; --dirty builds
 # it anyway for a local test and names both files -DIRTY (see
@@ -88,6 +88,9 @@ rm -rf "$BUILD_DIR/stage"
 mkdir -p "$STAGE"
 $HOST-strip -o "$STAGE/cartlink.exe" "$SRC/cartlink.exe"
 cp "$SRC/COPYING" "$STAGE/COPYING.txt"
+# Mozilla's CA list: checked after the Windows root store, which can
+# lack roots on a fresh PC.
+cp "$SRC/media/cacert.pem" "$STAGE/cacert.pem"
 python3 "$SRC/tools/third_party_notices.py" "$SRC" "$STAGE/THIRD-PARTY-NOTICES.txt" windows
 release_source_txt "$BUILD_DIR/SOURCE.txt" "64-bit Windows" \
 "cartlink.exe is statically linked: it contains the MinGW-w64 runtime,
@@ -117,6 +120,10 @@ Netplay: everyone loads the same link, then host / join as usual.
 Only load games you own or have the right to use. Cartlink does not
 provide, link to or help find games.
 
+cacert.pem is Mozilla's list of trusted certificate authorities
+(MPL-2.0, see THIRD-PARTY-NOTICES.txt). Cartlink uses it with the
+Windows list to check https sites: keep it next to cartlink.exe.
+
 If Windows SmartScreen warns about an unknown app: More info > Run anyway.
 Needs Windows 10 or newer.
 EOF
@@ -126,3 +133,5 @@ echo "== Done:"
 echo "   $ZIP"
 echo "   $TARBALL"
 unzip -l "$ZIP"
+unzip -l "$ZIP" | grep -q " Cartlink/cacert.pem$" \
+   || { echo "cacert.pem is missing from $ZIP" >&2; exit 1; }

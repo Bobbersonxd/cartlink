@@ -105,6 +105,8 @@ rm -rf "$BUILD_DIR/stage"
 mkdir -p "$STAGE"
 strip -o "$STAGE/cartlink" "$BIN"
 cp "$SRC/COPYING" "$STAGE/COPYING"
+# Mozilla's CA list: used when the system has none.
+cp "$SRC/media/cacert.pem" "$STAGE/cacert.pem"
 python3 "$SRC/tools/third_party_notices.py" "$SRC" "$STAGE/THIRD-PARTY-NOTICES.txt" linux
 release_source_txt "$STAGE/SOURCE.txt" "Linux $ARCH" \
 "Built in a container from $BASE_IMAGE
@@ -140,6 +142,10 @@ Source code: see SOURCE.txt.
 Netplay: everyone loads the same link, then host / join as usual.
 Only load games you own or have the right to use. Cartlink does not
 provide, link to or help find games.
+
+cacert.pem is Mozilla's list of trusted certificate authorities
+(MPL-2.0, see THIRD-PARTY-NOTICES.txt). Cartlink checks https sites
+against your system's list and uses this one only if it finds none.
 EOF
 rm -f "$OUT"
 tar -C "$BUILD_DIR/stage" --owner=0 --group=0 --numeric-owner -cf - "$PKG" | gzip -n -9 > "$OUT"
@@ -147,3 +153,5 @@ echo "== Done:"
 echo "   $OUT"
 echo "   $TARBALL"
 tar -tvzf "$OUT"
+tar -tzf "$OUT" | grep -qx "$PKG/cacert.pem" \
+   || { echo "cacert.pem is missing from $OUT" >&2; exit 1; }
