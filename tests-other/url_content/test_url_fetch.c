@@ -1197,7 +1197,11 @@ static void test_https_cert(void)
    new_cache(cache, sizeof(cache), "https-cert-noca");
    r = fetch_s("localhost", "/game.sfc", cache, NULL, NULL,
          out, sizeof(out), err, sizeof(err));
-   EXPECT(r == URL_FETCH_CERT_INVALID);
+   /* ... but it says the certificate can't be checked, not that it is
+    * not valid. */
+   EXPECT(r == URL_FETCH_CERT_UNCHECKED);
+   EXPECT_STR(err, "Cartlink can't check this site's security certificate (no certificate list found).");
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
    r = fetch_s_any("localhost", "/game.sfc", cache, NULL, NULL,
          out, sizeof(out), err, sizeof(err), NULL, true);
    EXPECT(r == URL_FETCH_OK);

@@ -118,6 +118,11 @@ bool task_push_url_content_load(const char *url);
  * (never for a login: url_fetch_to_cache_ex). */
 bool task_push_url_content_load_anyway(const char *url);
 
+/* True if the certificate choice on screen is for "no CA list found"
+ * (URL_FETCH_CERT_UNCHECKED), false for an invalid certificate. Main
+ * thread only. */
+bool task_url_cert_choice_no_ca(void);
+
 /* "Load from URL" game lists. A link that answers with a folder
  * listing opens a menu level for it; the list is kept here, one per
  * open level, keyed by the menu stack depth of that level (stack size

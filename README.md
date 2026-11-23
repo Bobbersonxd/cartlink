@@ -81,7 +81,9 @@ or the server kit's `cartlink-link` helper, which prints the whole link.
 Every https download checks the site's security certificate. If it is
 not valid you see "This site's security certificate is not valid.
 Someone may be changing the file on the way." with **Cancel** and
-**Download anyway (unsafe)**. *Download anyway* is offered only for
+**Download anyway (unsafe)**. If Cartlink finds no list of trusted
+certificates to check against, it says "Cartlink can't check this site's
+security certificate (no certificate list found)." with the same choice. *Download anyway* is offered only for
 downloads without a login, for that one download. A link with a
 fingerprint is downloaded and then must match its fingerprint. The
 command line never offers *Download anyway*.

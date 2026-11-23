@@ -63,6 +63,7 @@ enum uf_auth
 };
 
 #define UF_SITE_LEN     300
+#define UF_MSG_CERT_NO_CA "Cartlink can't check this site's security certificate (no certificate list found)."
 #define UF_MSG_LOGIN_HTTP "This server asks for a password without encryption (http). Use its https:// address."
 
 /* Where a 2xx body goes while it arrives: straight into the .part
@@ -859,8 +860,16 @@ enum url_fetch_result url_fetch_to_cache_ex(const char *url,
       {
          /* Nothing was sent that needs protecting: the caller may offer
           * "Download anyway (unsafe)" (never for a login). */
-         uf_set_err(err, err_len, "This site's security certificate is not valid. Someone may be changing the file on the way.");
-         ret = URL_FETCH_CERT_INVALID;
+         if (r->tls_error == NET_HTTP_TLS_NO_CA)
+         {
+            uf_set_err(err, err_len, UF_MSG_CERT_NO_CA);
+            ret = URL_FETCH_CERT_UNCHECKED;
+         }
+         else
+         {
+            uf_set_err(err, err_len, "This site's security certificate is not valid. Someone may be changing the file on the way.");
+            ret = URL_FETCH_CERT_INVALID;
+         }
          goto end;
       }
       uf_set_err(err, err_len, r->tls_error == NET_HTTP_TLS_NO_CA

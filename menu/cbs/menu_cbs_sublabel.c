@@ -933,7 +933,24 @@ DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_url_archive_account,         MENU_EN
 DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_url_forget_logins,           MENU_ENUM_SUBLABEL_URL_FORGET_LOGINS)
 DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_url_clear_cache,             MENU_ENUM_SUBLABEL_URL_CLEAR_CACHE)
 DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_url_saved_servers,           MENU_ENUM_SUBLABEL_URL_SAVED_SERVERS)
-DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_url_download_anyway,         MSG_URL_CERT_INVALID)
+/* The choice says why: an invalid certificate, or none could be
+ * checked (no CA list found). */
+static int action_bind_sublabel_url_download_anyway(
+      file_list_t *list,
+      unsigned type, unsigned i,
+      const char *label, const char *path,
+      char *s, size_t len)
+{
+#ifdef HAVE_NETWORKING
+   if (task_url_cert_choice_no_ca())
+   {
+      strlcpy(s, msg_hash_to_str(MSG_URL_CERT_NO_CA), len);
+      return 1;
+   }
+#endif
+   strlcpy(s, msg_hash_to_str(MSG_URL_CERT_INVALID), len);
+   return 1;
+}
 DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_netplay_tcp_udp_port,          MENU_ENUM_SUBLABEL_NETPLAY_TCP_UDP_PORT)
 DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_netplay_max_connections,       MENU_ENUM_SUBLABEL_NETPLAY_MAX_CONNECTIONS)
 DEFAULT_SUBLABEL_MACRO(action_bind_sublabel_netplay_max_ping,              MENU_ENUM_SUBLABEL_NETPLAY_MAX_PING)

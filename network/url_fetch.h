@@ -44,8 +44,11 @@ enum url_fetch_result
    URL_FETCH_BLOCKED_FINGERPRINT, /* #sha256= did not match: nothing kept */
    URL_FETCH_CERT_INVALID,    /* https certificate did not verify (no login
                                  sent): may be retried with download_anyway */
-   URL_FETCH_LOGIN_HTTP       /* a plain http server answered 401: no login
+   URL_FETCH_LOGIN_HTTP,      /* a plain http server answered 401: no login
                                  is ever sent over http, no prompt */
+   URL_FETCH_CERT_UNCHECKED   /* like CERT_INVALID, but no CA certificates
+                                 were found to check against: the same
+                                 Cancel / Download anyway choice */
 };
 
 typedef void (*url_fetch_progress_t)(size_t done, size_t total, void *ud);
@@ -86,8 +89,9 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
  * - Every https request needs a certificate that verifies against the
  *   system CAs. A request carrying a login or archive.org keys that
  *   fails it is never sent: FAILED, the login was not sent.
- * - Without a login, a failed check is CERT_INVALID (nothing sent or
- *   kept, err says so): the caller may ask the user and call again with
+ * - Without a login, a failed check is CERT_INVALID, or CERT_UNCHECKED
+ *   when no CA certificates were found at all (nothing sent or kept,
+ *   err says so): the caller may ask the user and call again with
  *   download_anyway = true, which skips the check for this download's
  *   requests that carry no login (never for a login or keys). Such a
  *   file is marked unverified in the cache (<prefix>.unverified): a

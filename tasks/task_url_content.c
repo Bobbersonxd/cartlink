@@ -108,6 +108,7 @@ static struct
    char url[URL_TASK_URL_MAX];
    char host[URL_TASK_HOST_MAX];
    char user[URL_TASK_CRED_MAX];
+   bool cert_no_ca; /* the last certificate choice: no CA list found */
 } url_task_st;
 
 static bool url_task_push(const char *url,
@@ -328,6 +329,10 @@ static void url_task_handler(retro_task_t *task)
          url_task_finish_msg(task,
                msg_hash_to_str(MSG_URL_CERT_INVALID), false);
          break;
+      case URL_FETCH_CERT_UNCHECKED: /* the same choice */
+         url_task_finish_msg(task,
+               msg_hash_to_str(MSG_URL_CERT_NO_CA), false);
+         break;
       case URL_FETCH_LOGIN_HTTP: /* never a login prompt over http */
          url_task_finish_msg(task,
                msg_hash_to_str(MSG_URL_LOGIN_HTTP), true);
@@ -479,6 +484,11 @@ void task_url_catalog_prune(size_t depth)
    }
 }
 
+bool task_url_cert_choice_no_ca(void)
+{
+   return url_task_st.cert_no_ca;
+}
+
 const struct url_catalog *task_url_catalog_get(size_t depth,
       const char *url)
 {
@@ -614,6 +624,7 @@ static void url_task_callback(retro_task_t *task,
 #endif
          break;
       case URL_FETCH_CERT_INVALID:
+      case URL_FETCH_CERT_UNCHECKED:
          /* Only ever for a download without a login or a fingerprint
           * (url_fetch_to_cache_ex): the user may take it unchecked,
           * once, or cancel. Never decided here. */
@@ -624,6 +635,7 @@ static void url_task_callback(retro_task_t *task,
             struct menu_state *menu_st = menu_state_get_ptr();
             if (!(menu_st->flags & MENU_ST_FLAG_ALIVE))
                retroarch_menu_running();
+            url_task_st.cert_no_ca = d->result == URL_FETCH_CERT_UNCHECKED;
             action_ok_url_cert_choice_push(d->url);
          }
 #endif
@@ -897,6 +909,9 @@ bool task_url_content_fetch_cli(const char *url,
          break;
       case URL_FETCH_CERT_INVALID: /* no "Download anyway" here */
          url_cli_error(msg_hash_to_str(MSG_URL_CERT_INVALID));
+         break;
+      case URL_FETCH_CERT_UNCHECKED:
+         url_cli_error(msg_hash_to_str(MSG_URL_CERT_NO_CA));
          break;
       case URL_FETCH_LOGIN_HTTP:
          url_cli_error(msg_hash_to_str(MSG_URL_LOGIN_HTTP));
