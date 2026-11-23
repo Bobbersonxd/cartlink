@@ -2,3 +2,4 @@ test_url_content
 test_url_fetch
 obj-mbed/
 certs/
+test_archive_agree

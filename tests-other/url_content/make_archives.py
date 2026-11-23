@@ -111,6 +111,61 @@ def raw_zip(path, entries):
         f.write(out)
 
 
+def lh(name, data, method=0, csize=None, flags=0, sig=0x04034B50):
+    # One local header (+ name) with the sizes as claimed.
+    cs = len(data) if csize is None else csize
+    return struct.pack("<IHHHHHIIIHH", sig, 20, flags, method, 0, 0,
+                       zlib.crc32(data), cs, len(data), len(name), 0) + name
+
+
+def cdh(name, data, off, method=0, csize=None, usize=None, flags=0):
+    # One central directory entry with the sizes as claimed.
+    cs = len(data) if csize is None else csize
+    us = len(data) if usize is None else usize
+    return struct.pack("<IHHHHHHIIIHHHHHII", 0x02014B50, 20, 20, flags,
+                       method, 0, 0, zlib.crc32(data), cs, us, len(name),
+                       0, 0, 0, 0, 0, off) + name
+
+
+def eocd(n, cd_size, cd_off, comment=b"", entries=None):
+    e = n if entries is None else entries
+    return struct.pack("<IHHHHIIH", 0x06054B50, 0, 0, e, e, cd_size,
+                       cd_off, len(comment)) + comment
+
+
+def one_member_zip(path, name, data, method=0, csize=None, usize=None,
+                   flags=0, lsig=0x04034B50, trailer=b"", comment=b"",
+                   entries=None):
+    # A stored one-member zip built by hand, with optional lies.
+    body = lh(name, data, method, csize, flags, lsig) + data
+    c = cdh(name, data, 0, method, csize, usize, flags)
+    with open(path, "wb") as f:
+        f.write(body + c + eocd(1, len(c), len(body), comment, entries)
+                + trailer)
+
+
+def two_eocd_zip(path):
+    # Two central directories (review C1): a harmful one whose EOCD
+    # comment runs to the end of the file (RetroArch's choice), and a
+    # harmless one whose EOCD sits inside that comment (what a
+    # "comment fits" scan picks).
+    d, n = pe_exe(), b"GAME.EXE"
+    g, gn = bytes(4096), b"game.gb"
+    blob = lh(n, d) + d
+    goff = len(blob)
+    blob += lh(gn, g) + g
+    evil = cdh(n, d, 0)
+    evil_off = len(blob)
+    blob += evil
+    good = cdh(gn, g, goff)
+    good_off = len(blob)
+    blob += good
+    tail = eocd(1, len(good), good_off) + bytes(8)
+    blob += eocd(1, len(evil), evil_off, tail)
+    with open(path, "wb") as f:
+        f.write(blob)
+
+
 def seven(tool, path, files, extra=None):
     # files: (name, data) written into a temp folder, then archived.
     work = tempfile.mkdtemp()
@@ -149,6 +204,25 @@ def main():
     write_zip(j("dos_world_pe.zip"), dos_world + [("WIN.DLL", pe_exe())])
     write_zip(j("vbs_member.zip"), [("game.gb", gb),
                                     ("run.vbs", b'MsgBox "hi"\r\n')])
+    # Review C1/C2 and the reader-agreement cases (hand-made headers).
+    pe = pe_exe()
+    two_eocd_zip(j("two_eocd.zip"))
+    one_member_zip(j("csize_lie.zip"), b"GAME.EXE", pe, csize=2)
+    one_member_zip(j("csize_honest.zip"), b"GAME.EXE", pe)
+    one_member_zip(j("encrypted_flag.zip"), b"game.bin", pe, flags=1)
+    one_member_zip(j("no_local_sig.zip"), b"game.bin", pe, lsig=0)
+    one_member_zip(j("eocd_not_at_end.zip"), b"game.gb", gb[:512],
+                   trailer=b"junk")
+    one_member_zip(j("eocd_in_comment.zip"), b"game.gb", gb[:512],
+                   comment=b"see PK\x05\x06 here")
+    one_member_zip(j("zip64_marker.zip"), b"game.gb", gb[:512],
+                   entries=0xFFFF)
+    one_member_zip(j("usize_ffff.zip"), b"game.gb", gb[:512],
+                   csize=0xFFFFFFFF, usize=0xFFFFFFFF)
+    one_member_zip(j("dir_with_pe.zip"), b"x/", pe)
+    write_zip(j("cmd_member.zip"), [("game.gb", gb), ("run.cmd", b"@echo hi\r\n")])
+    write_zip(j("stream_name.zip"), [("run.vbs::$DATA", b'MsgBox "hi"')])
+    write_zip(j("colon_name.zip"), [("game:alt.gb", gb)])
     write_zip(j("slip_dotdot.zip"), [("../x.gb", gb)])
     write_zip(j("slip_abs.zip"), [("/abs.gb", gb)])
     write_zip(j("slip_drive.zip"), [("C:\\x.gb", gb)])
@@ -200,16 +274,22 @@ def main():
         f.write(b"7z\xbc\xaf\x27\x1c junk")
 
 
-def run(binary):
-    # Fixtures in a fresh temp folder, the test binary on it, and the
-    # folder removed again whatever happens.
+def run(binary, agree=None):
+    # Fixtures in a fresh temp folder, the test binary on it (and the
+    # RetroArch-reader agreement test on every archive), and the folder
+    # removed again whatever happens.
     with tempfile.TemporaryDirectory(prefix="url_safety_fix.") as d:
         sys.argv = [sys.argv[0], d]
         main()
-        return subprocess.call([binary, d])
+        rc = subprocess.call([binary, d])
+        if agree:
+            files = sorted(os.path.join(d, n) for n in os.listdir(d)
+                           if n.endswith((".zip", ".7z")))
+            rc = subprocess.call([agree] + files) or rc
+        return rc
 
 
 if __name__ == "__main__":
     if len(sys.argv) >= 3 and sys.argv[1] == "--run":
-        sys.exit(run(sys.argv[2]))
+        sys.exit(run(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None))
     main()

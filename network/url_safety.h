@@ -71,7 +71,8 @@ enum url_safety_verdict url_safety_check_archive(const char *path);
 
 /* Windows: writes the Zone.Identifier stream (ZoneId=3 + HostUrl,
  * without any user:password@ part or #fragment) so Windows treats the
- * file as downloaded from the internet. No-op elsewhere. */
+ * file as downloaded from the internet, unless the file already has
+ * one. No-op elsewhere. */
 void url_safety_mark_downloaded(const char *path, const char *url);
 
 /* The Zone.Identifier text url_safety_mark_downloaded writes

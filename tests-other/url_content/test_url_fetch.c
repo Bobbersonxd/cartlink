@@ -23,6 +23,9 @@
 #include <dirent.h>
 #include <time.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <utime.h>
 
 #include <net/net_http.h>
 #include <net/net_socket_ssl.h>
@@ -243,8 +246,56 @@ static void test_leftover_part_removed(void)
       fputs("junk", f);
       fclose(f);
    }
+   /* A fresh .part may be another download of the same link going on
+    * right now: it is left alone. */
    r = fetch("/game.sfc", cache, NULL, NULL, out, sizeof(out), NULL, 0);
    EXPECT(r == URL_FETCH_OK);
+   EXPECT(count_files(cache, NULL, 0, &parts) == 2);
+   EXPECT(parts == 1);
+   /* Untouched for two hours: a leftover, removed (on a cache hit too). */
+   {
+      struct utimbuf old;
+      old.actime = old.modtime = time(NULL) - 2 * 3600;
+      EXPECT(utime(part, &old) == 0);
+   }
+   r = fetch("/game.sfc", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_CACHED);
+   EXPECT(count_files(cache, NULL, 0, &parts) == 1);
+   EXPECT(parts == 0);
+}
+
+/* Two downloads of one link at the same time (two RetroArch
+ * instances): both finish, one file, no .part left. */
+static void test_concurrent_same_url(void)
+{
+   char cache[300], out[512];
+   int parts = 0, status = 0;
+   pid_t pid;
+   enum url_fetch_result r;
+   new_cache(cache, sizeof(cache), "concurrent");
+   mkdir(cache, 0700);
+   fflush(stdout);
+   if ((pid = fork()) == 0)
+   {
+      char o[512];
+      r = fetch("/slowsmall", cache, NULL, NULL, o, sizeof(o), NULL, 0);
+      _exit(r == URL_FETCH_OK ? 0 : 10 + (int)r);
+   }
+   EXPECT(pid > 0);
+   {
+      struct timespec ts = {0, 300000000};
+      nanosleep(&ts, NULL);   /* the first one is half-way by now */
+   }
+   r = fetch("/slowsmall", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   if (pid > 0)
+   {
+      waitpid(pid, &status, 0);
+      if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+         printf("  (first download: status %d)\n", status);
+      EXPECT(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+   }
+   EXPECT(file_size(out) == 2L * 1024L * 1024L);
    EXPECT(count_files(cache, NULL, 0, &parts) == 1);
    EXPECT(parts == 0);
 }
@@ -1260,6 +1311,7 @@ int main(int argc, char **argv)
 
    test_ok_and_cached();
    test_leftover_part_removed();
+   test_concurrent_same_url();
    test_nodisp();
    test_page();
    test_basic();

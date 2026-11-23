@@ -1702,6 +1702,23 @@ static void test_safety_archive_zip(void)
    EXPECT_FIX("toobig.zip", URL_SAFE_ARCHIVE_TOO_BIG);
    EXPECT_FIX("broken.zip", URL_SAFE_UNREADABLE);
    EXPECT_FIX("missing.zip", URL_SAFE_UNREADABLE);
+
+   /* Review C1/C2: read exactly what RetroArch's reader reads, refuse
+    * where the two could disagree. */
+   EXPECT_FIX("two_eocd.zip", URL_SAFE_UNREADABLE);
+   EXPECT_FIX("csize_lie.zip", URL_SAFE_UNREADABLE);
+   EXPECT_FIX("csize_honest.zip", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("encrypted_flag.zip", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("no_local_sig.zip", URL_SAFE_UNREADABLE);
+   EXPECT_FIX("eocd_not_at_end.zip", URL_SAFE_UNREADABLE);
+   EXPECT_FIX("eocd_in_comment.zip", URL_SAFE_UNREADABLE);
+   EXPECT_FIX("zip64_marker.zip", URL_SAFE_UNREADABLE);
+   EXPECT_FIX("usize_ffff.zip", URL_SAFE_UNREADABLE);
+   EXPECT_FIX("dir_with_pe.zip", URL_SAFE_ARCHIVE_TRAP);
+   /* Ruling R6 + minors: .cmd always, no ':' in member names. */
+   EXPECT_FIX("cmd_member.zip", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("stream_name.zip", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("colon_name.zip", URL_SAFE_ARCHIVE_TRAP);
 }
 
 static void test_safety_archive_7z(void)

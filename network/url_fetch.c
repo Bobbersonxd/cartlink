@@ -17,8 +17,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 #include <compat/strl.h>
+#include <encodings/utf.h>
 #include <file/file_path.h>
 #include <retro_dirent.h>
 #include <retro_miscellaneous.h>
@@ -43,7 +47,9 @@
 /* A JSON answer (maybe a game list) is kept in memory up to this,
  * then treated as a plain file. */
 #define UF_JSON_MEM     ((size_t)16 * 1024 * 1024)
-#define UF_PART_NAME    "download.part"
+/* A .part file untouched this long is a leftover (a crash); younger
+ * ones may belong to another download of the same link right now. */
+#define UF_PART_STALE_SEC 3600
 /* Files first; Caddy answers a folder with its JSON listing. */
 #define UF_ACCEPT       "Accept: */*, application/json;q=0.9\r\n"
 
@@ -399,8 +405,29 @@ static bool uf_get(const char *url, const char *auth_or_null,
    return true;
 }
 
-/* Scans cache_dir for <prefix>*: deletes leftover .part files and
- * copies the first finished file name into found (empty if none). */
+/* True if the file at path was last written more than
+ * UF_PART_STALE_SEC ago. False if that can't be told. */
+static bool uf_part_is_stale(const char *path)
+{
+#if defined(_WIN32)
+   struct _stat64 st;
+   int rc;
+   wchar_t *w = utf8_to_utf16_string_alloc(path);
+   if (!w)
+      return false;
+   rc = _wstat64(w, &st);
+   free(w);
+#else
+   struct stat st;
+   int rc = stat(path, &st);
+#endif
+   if (rc != 0)
+      return false;
+   return difftime(time(NULL), st.st_mtime) > UF_PART_STALE_SEC;
+}
+
+/* Scans cache_dir for <prefix>*: deletes leftover (stale) .part files
+ * and copies the first finished file name into found (empty if none). */
 static void uf_scan_cache(const char *cache_dir, const char *prefix,
       bool delete_parts, char *found, size_t found_len)
 {
@@ -421,7 +448,8 @@ static void uf_scan_cache(const char *cache_dir, const char *prefix,
          {
             char path[PATH_MAX_LENGTH];
             fill_pathname_join_special(path, cache_dir, name, sizeof(path));
-            filestream_delete(path);
+            if (uf_part_is_stale(path))
+               filestream_delete(path);
          }
       }
       else if (!found[0])
@@ -600,6 +628,8 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
             err, err_len);
       if (ret != URL_FETCH_OK)
          goto end;
+      /* Files from older builds have no mark yet. */
+      url_safety_mark_downloaded(final_path, fixed);
       if (out_path && out_len)
          strlcpy(out_path, final_path, out_len);
       ret = URL_FETCH_CACHED;
@@ -607,10 +637,20 @@ enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
    }
 
    /* The body is written here as it arrives; renamed once complete
-    * and checked. Leftovers are removed by uf_scan_cache. */
-   fill_pathname_join_special(part_path, cache_dir, prefix,
-         sizeof(part_path));
-   strlcat(part_path, UF_PART_NAME, sizeof(part_path));
+    * and checked. The name is this download's own, so two downloads
+    * of one link at the same time (two threads or two RetroArch
+    * instances) never share or delete each other's file. Leftovers
+    * are removed by uf_scan_cache once stale. */
+   {
+      static unsigned counter = 0;
+      char tag[64];
+      snprintf(tag, sizeof(tag), "dl%llx%x%lx.part",
+            (unsigned long long)cpu_features_get_time_usec(),
+            ++counter, (unsigned long)((size_t)r & 0xFFFFFFFFu));
+      fill_pathname_join_special(part_path, cache_dir, prefix,
+            sizeof(part_path));
+      strlcat(part_path, tag, sizeof(part_path));
+   }
 
    if (!string_is_empty(user_or_null))
    {

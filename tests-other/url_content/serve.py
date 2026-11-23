@@ -367,6 +367,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(GAME[:1000])
             self.wfile.flush()
             self.close_connection = True
+        elif path == "/slowsmall":
+            # 2 MiB in about 1 s (two downloads of it overlap).
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(2 * 1024 * 1024))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            chunk = bytes((i * 7 + 3) & 0xFF for i in range(64 * 1024))
+            try:
+                for _ in range(32):
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+                    time.sleep(0.03)
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
         elif path == "/slow":
             # 16 MiB in about 10 s: still running when a test quits, and
             # the progress percentage changes every ~0.1 s.

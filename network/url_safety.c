@@ -124,7 +124,7 @@ static bool us_ext_is_dos(const char *ext)
 static const char *const us_archive_block_exts[] = {
    "ps1", "psm1", "vbs", "vbe", "js", "jse", "wsf", "wsh", "hta", "lnk",
    "url", "reg", "scf", "msi", "msp", "jar", "desktop", "appimage",
-   "command", "sh", "bash", NULL
+   "command", "sh", "bash", "cmd", NULL
 };
 
 /* Names Windows/DOS run as binaries: if their bytes can't be read,
@@ -144,11 +144,6 @@ static uint32_t us_le32(const uint8_t *p)
 static uint16_t us_le16(const uint8_t *p)
 {
    return (uint16_t)(p[0] | (p[1] << 8));
-}
-
-static uint64_t us_le64(const uint8_t *p)
-{
-   return (uint64_t)us_le32(p) | ((uint64_t)us_le32(p + 4) << 32);
 }
 
 /* Classifies the first n bytes of a file. For US_MZ_FAR, *pe_off is
@@ -255,6 +250,9 @@ static enum url_safety_verdict us_check_member_name(const char *name,
          && ((name[0] >= 'A' && name[0] <= 'Z')
           || (name[0] >= 'a' && name[0] <= 'z')))
       return URL_SAFE_ARCHIVE_TRAP;            /* drive letter */
+   /* Any other ':' is an NTFS stream ("run.vbs::$DATA") or a drive. */
+   if (memchr(name, ':', n))
+      return URL_SAFE_ARCHIVE_TRAP;
 
    m->is_dir = (name[n - 1] == '/' || name[n - 1] == '\\');
 
@@ -360,7 +358,6 @@ static size_t us_zip_entry(const uint8_t *p, size_t avail,
       struct us_zip_entry *e)
 {
    size_t nlen, xlen, clen, total;
-   const uint8_t *x;
    if (avail < 46 || us_le32(p) != 0x02014B50u)
       return 0;
    nlen  = us_le16(p + 28);
@@ -377,43 +374,16 @@ static size_t us_zip_entry(const uint8_t *p, size_t avail,
    e->name     = (const char*)p + 46;
    e->name_len = nlen;
 
-   /* ZIP64: the 0xFFFFFFFF fields come from extra field 0x0001, in
-    * the order usize, csize, offset. */
-   x = p + 46 + nlen;
-   while (xlen >= 4)
-   {
-      size_t id  = us_le16(x);
-      size_t len = us_le16(x + 2);
-      if (len + 4 > xlen)
-         return 0;
-      if (id == 0x0001)
-      {
-         const uint8_t *v = x + 4;
-         size_t left      = len;
-         if (e->usize == 0xFFFFFFFFu)
-         {
-            if (left < 8)
-               return 0;
-            e->usize = us_le64(v);
-            v += 8; left -= 8;
-         }
-         if (e->csize == 0xFFFFFFFFu)
-         {
-            if (left < 8)
-               return 0;
-            e->csize = us_le64(v);
-            v += 8; left -= 8;
-         }
-         if (e->offset == 0xFFFFFFFFu)
-         {
-            if (left < 8)
-               return 0;
-            e->offset = us_le64(v);
-         }
-      }
-      x    += 4 + len;
-      xlen -= 4 + len;
-   }
+   /* RetroArch's reader (archive_file_zlib.c) uses these 32-bit fields
+    * as they are and knows no ZIP64: a ZIP64 marker would make the two
+    * readers see different members, so it is refused. */
+   if (     e->csize == 0xFFFFFFFFu || e->usize == 0xFFFFFFFFu
+         || e->offset == 0xFFFFFFFFu)
+      return 0;
+   /* RetroArch reads usize bytes of a stored member, whatever csize
+    * says: the two must agree or the check would see other bytes. */
+   if (e->method == 0 && e->csize != e->usize)
+      return 0;
    return total;
 }
 
@@ -446,7 +416,7 @@ static bool us_zip_locate(struct us_zip_reader *r)
 
 /* Up to want bytes of the member starting at uncompressed offset skip.
  * Returns how many were read; (size_t)-1 if the member can't be read
- * (encrypted, unknown method, broken data). Never inflates more than
+ * (unknown method, broken data: RetroArch fails on those too). Never inflates more than
  * skip + want bytes. */
 static size_t us_zip_read(struct us_zip_reader *r, uint64_t skip,
       uint8_t *out, size_t want)
@@ -454,8 +424,8 @@ static size_t us_zip_read(struct us_zip_reader *r, uint64_t skip,
    const struct us_zip_entry *e = r->e;
    uint64_t avail;
 
-   if (e->flags & 1)
-      return (size_t)-1;                      /* encrypted */
+   /* Like RetroArch: the flags (e.g. "encrypted") are ignored, the
+    * bytes are read as they are. */
    avail = r->file_size - r->data_off;
    if (avail > e->csize)
       avail = e->csize;
@@ -556,7 +526,6 @@ static enum url_safety_verdict us_check_zip(const char *path)
    int64_t size;
    size_t tail_len, i, pos;
    uint64_t entries, cd_size, cd_off, total = 0, n;
-   uint64_t eocd_at;
    enum url_safety_verdict v = URL_SAFE_UNREADABLE;
    uint8_t *head   = NULL;
 
@@ -567,42 +536,43 @@ static enum url_safety_verdict us_check_zip(const char *path)
    if (size < 22)
       goto end;
 
-   /* End of central directory: the last "PK\5\6" whose comment fits. */
+   /* End of central directory, exactly as RetroArch finds it
+    * (archive_file_zlib.c): the last "PK\5\6" whose comment ends at
+    * the end of the file. Any other "PK\5\6" whose comment would fit
+    * (what other zip tools accept), or one inside the comment, means
+    * two readers could pick different directories: refused. */
    tail_len = (uint64_t)size < sizeof(tail) ? (size_t)size : sizeof(tail);
    if (!us_read_exact(f, (uint64_t)size - tail_len, tail, tail_len))
       goto end;
-   for (i = tail_len - 22 + 1; i-- > 0; )
    {
-      if (     us_le32(tail + i) == 0x06054B50u
-            && i + 22 + us_le16(tail + i + 20) <= tail_len)
-         break;
-      if (i == 0)
+      size_t k;
+      size_t found = (size_t)-1;
+      unsigned fits = 0;
+      for (k = tail_len - 22 + 1; k-- > 0; )
+      {
+         size_t clen;
+         if (us_le32(tail + k) != 0x06054B50u)
+            continue;
+         clen = us_le16(tail + k + 20);
+         if (k + 22 + clen <= tail_len)
+            fits++;
+         if (found == (size_t)-1 && k + 22 + clen == tail_len)
+            found = k;
+      }
+      if (found == (size_t)-1 || fits != 1)
          goto end;
+      for (k = found + 22; k + 4 <= tail_len; k++)
+         if (us_le32(tail + k) == 0x06054B50u)
+            goto end;
+      i = found;
    }
-   eocd_at = (uint64_t)size - tail_len + i;
    entries = us_le16(tail + i + 10);
    cd_size = us_le32(tail + i + 12);
    cd_off  = us_le32(tail + i + 16);
 
+   /* RetroArch knows no ZIP64: such an archive is refused. */
    if (entries == 0xFFFF || cd_size == 0xFFFFFFFFu || cd_off == 0xFFFFFFFFu)
-   {
-      /* ZIP64 locator just before, pointing at the ZIP64 record. */
-      uint8_t loc[20];
-      uint8_t rec[56];
-      uint64_t rec_at;
-      if (     eocd_at < 20
-            || !us_read_exact(f, eocd_at - 20, loc, sizeof(loc))
-            || us_le32(loc) != 0x07064B50u)
-         goto end;
-      rec_at = us_le64(loc + 8);
-      if (     rec_at + sizeof(rec) > (uint64_t)size
-            || !us_read_exact(f, rec_at, rec, sizeof(rec))
-            || us_le32(rec) != 0x06064B50u)
-         goto end;
-      entries = us_le64(rec + 32);
-      cd_size = us_le64(rec + 40);
-      cd_off  = us_le64(rec + 48);
-   }
+      goto end;
 
    if (entries > URL_SAFETY_MAX_MEMBERS)
    {
@@ -644,7 +614,7 @@ static enum url_safety_verdict us_check_zip(const char *path)
          total = (uint64_t)-1;
       pos   += len;
    }
-   if (n != entries && entries != 0xFFFF)
+   if (n != entries)
       goto end;
    if (total > URL_SAFETY_MAX_TOTAL)
    {
@@ -664,13 +634,16 @@ static enum url_safety_verdict us_check_zip(const char *path)
       size_t len   = us_zip_entry(cd + pos, (size_t)cd_size - pos, &e);
       pos         += len;
       us_check_member_name(e.name, e.name_len, &m);
-      if (m.is_dir || !e.usize)
+      if (!e.usize)
          continue;
       r.f         = f;
       r.file_size = (uint64_t)size;
       r.e         = &e;
-      if (us_zip_locate(&r))
-         got = us_zip_read(&r, 0, head, URL_SAFETY_HEAD_LEN);
+      /* No local header where the directory says: the readers could
+       * disagree on where the bytes start. */
+      if (!us_zip_locate(&r))
+         goto end;
+      got = us_zip_read(&r, 0, head, URL_SAFETY_HEAD_LEN);
       if (us_check_member_bytes(&m, got != (size_t)-1, head,
                got == (size_t)-1 ? 0 : got, e.usize,
                us_zip_read_at, &r) != URL_SAFE_OK)
@@ -956,6 +929,15 @@ void url_safety_mark_downloaded(const char *path, const char *url)
    snprintf(ads, sizeof(ads), "%s:Zone.Identifier", path);
    if (!(ads_w = utf8_to_utf16_string_alloc(ads)))
       return;
+   /* Already marked (e.g. a cache hit): leave it as it is. */
+   h = CreateFileW(ads_w, GENERIC_READ, FILE_SHARE_READ, NULL,
+         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+   if (h != INVALID_HANDLE_VALUE)
+   {
+      CloseHandle(h);
+      free(ads_w);
+      return;
+   }
    h = CreateFileW(ads_w, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
          FILE_ATTRIBUTE_NORMAL, NULL);
    free(ads_w);

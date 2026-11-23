@@ -121,8 +121,33 @@ $(BIN): $(SRCS) $(SAFETY_OBJ) $(SZ_LIB) ../../network/url_content.h ../../networ
 
 # make_archives.py builds the archive fixtures (dummy bytes only) in a
 # fresh temp folder, runs the tests on it and removes it again.
-test: $(BIN)
-	python3 -I ./make_archives.py --run ./$(BIN)
+# test_archive_agree: url_safety against RetroArch's own zip/7z reader.
+AGREE_BIN  := test_archive_agree
+AGREE_SRCS := test_archive_agree.c \
+        $(LRC)/file/archive_file.c \
+        $(LRC)/file/archive_file_zlib.c \
+        $(LRC)/file/archive_file_7z.c \
+        $(LRC)/streams/trans_stream.c \
+        $(LRC)/streams/trans_stream_pipe.c \
+        $(LRC)/streams/trans_stream_zlib.c \
+        $(LRC)/streams/file_stream.c \
+        $(LRC)/vfs/vfs_implementation.c \
+        $(LRC)/file/file_path.c \
+        $(LRC)/file/file_path_io.c \
+        $(LRC)/string/stdstring.c \
+        $(LRC)/lists/string_list.c \
+        $(LRC)/compat/compat_strl.c \
+        $(LRC)/compat/fopen_utf8.c \
+        $(LRC)/compat/compat_posix_string.c \
+        $(LRC)/encodings/encoding_utf.c \
+        $(LRC)/encodings/encoding_crc32.c \
+        $(LRC)/time/rtime.c
+
+$(AGREE_BIN): $(AGREE_SRCS) $(SAFETY_OBJ) $(SZ_LIB) ../../network/url_safety.h
+	$(CC) $(CFLAGS) -I../../deps -DHAVE_ZLIB -DHAVE_7ZIP -D_7ZIP_ST -o $@ $(AGREE_SRCS) $(SAFETY_LIBS)
+
+test: $(BIN) $(AGREE_BIN)
+	python3 -I ./make_archives.py --run ./$(BIN) ./$(AGREE_BIN)
 
 obj-mbed/%.o: $(MBED_DIR)/%.c
 	@mkdir -p obj-mbed
@@ -164,5 +189,5 @@ tls-online-test: $(FETCH_BIN)
 	./$(FETCH_BIN) online
 
 clean:
-	rm -f $(BIN) $(FETCH_BIN)
+	rm -f $(BIN) $(FETCH_BIN) $(AGREE_BIN)
 	rm -rf obj-mbed obj-7z certs
