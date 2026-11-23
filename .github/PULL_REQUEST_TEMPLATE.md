@@ -1,21 +1,14 @@
-## Guidelines
+<!--
+Thanks for helping. Cartlink is an unofficial fork of RetroArch; changes
+that are not about Cartlink's own features are usually better sent to
+RetroArch upstream (https://github.com/libretro/RetroArch).
 
-1. Rebase before opening a pull request
-2. If you are sending several unrelated fixes or features, use a branch and a separate pull request for each
-3. If possible try squashing everything in a single commit. This is particularly beneficial in the case of feature merges since it allows easy bisecting when a problem arises
+Contributions are under the GNU GPL v3 or later, like the rest of the code.
+Never add games, ROMs, BIOS files or links to them (also not in tests).
+-->
 
-## Description
+**What does this change?**
 
-[Description of the pull request, detail any issues you are fixing or any features you are implementing]
-
-## Related Issues
-
-[Any issues this pull request may be addressing]
-
-## Related Pull Requests
-
-[Any other PRs from related repositories that might be needed for this pull request to work]
-
-## Reviewers
-
-[If possible @mention all the people that should review your pull request]
+**How was it tested?**
+- [ ] `make -C tests-other/url_content test fetch-test`
+- [ ] `tools/url_e2e.sh` (if it touches Load from URL)
