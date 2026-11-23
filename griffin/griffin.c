@@ -1282,6 +1282,7 @@ NETPLAY
 #include "../network/url_logins.c"
 #include "../network/url_servers.c"
 #include "../network/url_fetch.c"
+#include "../network/url_safety.c"
 #include "../network/url_archive_org.c"
 #include "../tasks/task_url_content.c"
 #include "../tasks/task_pl_thumbnail_download.c"

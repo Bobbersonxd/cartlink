@@ -28,6 +28,33 @@ LAST_ACCEPT = ""  # Accept header of the latest GET
 GBDUMMY = b"GBDUMMY"
 
 
+def _zip(members):
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, data in members:
+            z.writestr(zipfile.ZipInfo(name), data)
+    return buf.getvalue()
+
+
+# Program-looking bytes (dummy, never a real program).
+_PE = bytearray(1024)
+_PE[0:2] = b"MZ"
+_PE[0x3C] = 0x80
+_PE[0x80:0x84] = b"PE\0\0"
+PE = bytes(_PE)
+ELF = b"\x7fELF\x02\x01\x01" + bytes(57)
+_DOS = bytearray(512)
+_DOS[0:2] = b"MZ"
+_DOS[0x3C:0x40] = b"\x34\x00\x12\x00"   # e_lfanew past the end: no PE
+DOSGAME_ZIP = _zip([("GAME.EXE", bytes(_DOS)),
+                    ("RUN.BAT", b"@echo off\r\nGAME.EXE\r\n"),
+                    ("DATA.DAT", GAME)])
+SLIP_ZIP = _zip([("../evil.gb", GAME)])
+CHUNKED_BIG = 20 * 1024 * 1024
+
+
 def caddy_item(name, is_dir, url, size):
     # One entry the way Caddy's file_server browse sends it as JSON
     # (folder names end in "/").
@@ -272,6 +299,44 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.close_connection = True
         elif path == "/game.sfc":
             self.send_body(200, GAME)
+        elif path == "/prog.exe":
+            self.send_body(200, PE)
+        elif path == "/sneaky.gb":
+            self.send_body(200, ELF)
+        elif path == "/named-prog":
+            # A harmless-looking link whose server names it .exe.
+            self.send_body(200, GAME, extra=[
+                ("Content-Disposition", 'attachment; filename="setup.exe"')])
+        elif path == "/dosgame.zip":
+            self.send_body(200, DOSGAME_ZIP)
+        elif path == "/slip.zip":
+            self.send_body(200, SLIP_ZIP)
+        elif path == "/slip.dat":
+            # The same bytes under a name that is not an archive.
+            self.send_body(200, SLIP_ZIP)
+        elif path == "/chunked" or path == "/chunkedbig":
+            # Transfer-Encoding: chunked, in uneven pieces.
+            body = GAME if path == "/chunked" else \
+                bytes((i * 7 + 3) & 0xFF for i in range(256)) * \
+                (CHUNKED_BIG // 256)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            pos = 0
+            step = 1
+            try:
+                while pos < len(body):
+                    n = min(len(body) - pos, step)
+                    self.wfile.write(b"%x\r\n" % n + body[pos:pos + n]
+                                     + b"\r\n")
+                    pos += n
+                    step = step * 3 + 1 if step < 300000 else 1
+                self.wfile.write(b"0\r\n\r\n")
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            self.close_connection = True
         elif path == "/nodisp?id=1":
             self.send_body(200, GAME, extra=[
                 ("Content-Disposition", 'attachment; filename="Named.gba"')])

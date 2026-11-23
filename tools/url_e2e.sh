@@ -12,6 +12,8 @@
 #   Run S: the same URL with a saved login in url_logins.cfg downloads
 #   Run C: a game-list (folder) URL on the command line exits 1 with
 #          "open it from the menu", caches nothing, saves no server
+#   Run B: a program behind a game name (.gb with ELF bytes) exits 1
+#          with "Blocked: ...", nothing left in the cache
 #   Run 3: netplay, host and client both loading the same URL
 #   Run 4: a media URL (live.mp4) still takes the old media path
 #   Run M: an extensionless stream URL with a media core (-L ...ffmpeg...)
@@ -292,6 +294,21 @@ if [ $rc -eq 1 ] && grep -q \
    pass "run C: game list URL refused on the command line (exit $rc)"
 else
    fail "run C: game list (exit $rc, cache files $cfiles, see $WORK/runC.log.out)"
+fi
+
+# ------------------------------------------------- run B: not a game
+
+PB=$(make_profile blocked)
+ra "$PB" "$WORK/runB.log" -L "$CORE" "http://127.0.0.1:$AUTH_PORT/sneaky.gb" \
+   --max-frames=30
+rc=$?
+bfiles=$(find "$PB/assets/url_cache" -type f 2>/dev/null | wc -l)
+if [ $rc -eq 1 ] && grep -q \
+      "Blocked: this link gives a program, not a game." "$WORK/runB.log.out" \
+      && [ "$bfiles" -eq 0 ]; then
+   pass "run B: program behind a game name refused, nothing cached (exit $rc)"
+else
+   fail "run B: not a game (exit $rc, cache files $bfiles, see $WORK/runB.log.out)"
 fi
 
 # ------------------------------------------------- run 3: netplay

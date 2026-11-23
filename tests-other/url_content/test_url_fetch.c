@@ -385,18 +385,170 @@ static void test_missing(void)
    EXPECT(count_files(cache, NULL, 0, NULL) == 0);
 }
 
+/* Peak resident memory in KiB (VmHWM), after resetting it to now when
+ * reset is set. -1 if /proc is not there. */
+static long peak_rss_kib(int reset)
+{
+   char line[256];
+   long kib = -1;
+   FILE *f;
+   if (reset && (f = fopen("/proc/self/clear_refs", "w")))
+   {
+      fputs("5", f);
+      fclose(f);
+   }
+   if (!(f = fopen("/proc/self/status", "r")))
+      return -1;
+   while (fgets(line, sizeof(line), f))
+      if (!strncmp(line, "VmHWM:", 6))
+         kib = atol(line + 6);
+   fclose(f);
+   return kib;
+}
+
+/* 300 MiB goes straight to the file: memory hardly grows. */
 static void test_big(void)
 {
    char cache[300], out[512];
+   long before, after;
    enum url_fetch_result r;
    new_cache(cache, sizeof(cache), "big");
+   before = peak_rss_kib(1);
    r = fetch("/big", cache, NULL, NULL, out, sizeof(out), NULL, 0);
-   EXPECT(r == URL_FETCH_OK || r == URL_FETCH_TOO_BIG);
+   after  = peak_rss_kib(0);
+   EXPECT(r == URL_FETCH_OK);
    if (r == URL_FETCH_OK)
    {
       EXPECT(file_size(out) == 300L * 1024L * 1024L);
       remove(out);
    }
+   if (before > 0 && after > 0)
+   {
+      printf("  /big: peak memory grew by %ld KiB\n", after - before);
+      EXPECT(after - before < 64L * 1024L);
+   }
+   else
+      printf("SKIP: memory check (no /proc/self/status)\n");
+}
+
+static void test_chunked(void)
+{
+   char cache[300], out[512];
+   enum url_fetch_result r;
+   new_cache(cache, sizeof(cache), "chunked");
+   r = fetch("/chunked", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_game(out));
+
+   new_cache(cache, sizeof(cache), "chunkedbig");
+   r = fetch("/chunkedbig", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_size(out) == 20L * 1024L * 1024L);
+   if (r == URL_FETCH_OK)
+   {
+      unsigned char buf[4096];
+      size_t n, i;
+      long at = 0;
+      int same = 1;
+      FILE *f = fopen(out, "rb");
+      while (f && (n = fread(buf, 1, sizeof(buf), f)) > 0)
+      {
+         for (i = 0; i < n; i++, at++)
+            if (buf[i] != (unsigned char)(((at % 256) * 7 + 3) & 0xFF))
+               same = 0;
+      }
+      if (f)
+         fclose(f);
+      EXPECT(same);
+      remove(out);
+   }
+}
+
+static void copy_file(const char *from, const char *to)
+{
+   char buf[4096];
+   size_t n;
+   FILE *in  = fopen(from, "rb");
+   FILE *o   = fopen(to, "wb");
+   while (in && o && (n = fread(buf, 1, sizeof(buf), in)) > 0)
+      fwrite(buf, 1, n, o);
+   if (in)
+      fclose(in);
+   if (o)
+      fclose(o);
+}
+
+static void test_safety_fetch(void)
+{
+   char cache[300], out[512], out2[512], err[256], u[256], slip[512];
+   int parts = 0;
+   FILE *f;
+   enum url_fetch_result r;
+
+   /* A program by name and bytes. */
+   new_cache(cache, sizeof(cache), "prog");
+   url(u, sizeof(u), "/prog.exe");
+   r = url_fetch_to_cache(u, cache, NULL, NULL, out, sizeof(out),
+         NULL, 0, err, sizeof(err), NULL, NULL, NULL);
+   EXPECT(r == URL_FETCH_BLOCKED_PROGRAM);
+   EXPECT_STR(err, "Blocked: this link gives a program, not a game.");
+   EXPECT(out[0] == '\0');
+   EXPECT(count_files(cache, NULL, 0, &parts) == 0);
+
+   /* A game name with program bytes. */
+   new_cache(cache, sizeof(cache), "sneaky");
+   r = fetch("/sneaky.gb", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_BLOCKED_PROGRAM);
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+
+   /* Game bytes, but the server names it .exe. */
+   new_cache(cache, sizeof(cache), "namedprog");
+   r = fetch("/named-prog", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_BLOCKED_PROGRAM);
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+
+   /* A DOS game zip (.exe + .bat inside) is fine. */
+   new_cache(cache, sizeof(cache), "dosgame");
+   r = fetch("/dosgame.zip", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(ends_with(out, "_dosgame.zip"));
+   EXPECT(count_files(cache, NULL, 0, NULL) == 1);
+
+   /* Zip-slip: refused, nothing left behind. */
+   new_cache(cache, sizeof(cache), "slip");
+   url(u, sizeof(u), "/slip.zip");
+   r = url_fetch_to_cache(u, cache, NULL, NULL, out2, sizeof(out2),
+         NULL, 0, err, sizeof(err), NULL, NULL, NULL);
+   EXPECT(r == URL_FETCH_BLOCKED_ARCHIVE);
+   EXPECT_STR(err, "Blocked: this archive contains a program or an unsafe file path.");
+   EXPECT(count_files(cache, NULL, 0, &parts) == 0);
+
+   /* Cache hits are checked too: a cached zip turned into a trap. */
+   new_cache(cache, sizeof(cache), "slipsrc");
+   r = fetch("/slip.dat", cache, NULL, NULL, slip, sizeof(slip), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   new_cache(cache, sizeof(cache), "dosgame");
+   copy_file(slip, out);
+   r = fetch("/dosgame.zip", cache, NULL, NULL, out2, sizeof(out2), NULL, 0);
+   EXPECT(r == URL_FETCH_BLOCKED_ARCHIVE);
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+
+   /* ... and a cached game turned into a program. */
+   new_cache(cache, sizeof(cache), "tamper");
+   r = fetch("/game.sfc", cache, NULL, NULL, out, sizeof(out), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   if ((f = fopen(out, "wb")))
+   {
+      fwrite("\x7f" "ELF\x02\x01\x01\x00", 1, 8, f);
+      fclose(f);
+   }
+   r = fetch("/game.sfc", cache, NULL, NULL, out2, sizeof(out2), NULL, 0);
+   EXPECT(r == URL_FETCH_BLOCKED_PROGRAM);
+   EXPECT(count_files(cache, NULL, 0, NULL) == 0);
+   /* Afterwards the real file downloads again. */
+   r = fetch("/game.sfc", cache, NULL, NULL, out2, sizeof(out2), NULL, 0);
+   EXPECT(r == URL_FETCH_OK);
+   EXPECT(file_is_game(out2));
 }
 
 /* 1 if the file holds exactly text. */
@@ -1118,6 +1270,8 @@ int main(int argc, char **argv)
    test_drop();
    test_missing();
    test_big();
+   test_chunked();
+   test_safety_fetch();
    test_redirect_auth();
    test_redirect_limits();
    test_empty();

@@ -194,6 +194,20 @@ static void url_task_fetch_thread(void *ud)
 }
 #endif
 
+/* The message for a file the safety checks refused (and deleted). */
+static enum msg_hash_enums url_task_blocked_msg(enum url_fetch_result res)
+{
+   switch (res)
+   {
+      case URL_FETCH_BLOCKED_PROGRAM:
+         return MSG_URL_SAFETY_PROGRAM;
+      case URL_FETCH_BLOCKED_TOO_BIG:
+         return MSG_URL_SAFETY_TOO_BIG;
+      default:
+         return MSG_URL_SAFETY_ARCHIVE;
+   }
+}
+
 /* Replaces the task title with a final message, so the normal task
  * notification shows it. Error tasks show as failed. */
 static void url_task_finish_msg(retro_task_t *task, const char *msg,
@@ -296,6 +310,12 @@ static void url_task_handler(retro_task_t *task)
       case URL_FETCH_NOT_A_FILE:
          url_task_finish_msg(task,
                msg_hash_to_str(MSG_URL_CONTENT_NOT_A_FILE), true);
+         break;
+      case URL_FETCH_BLOCKED_PROGRAM:
+      case URL_FETCH_BLOCKED_ARCHIVE:
+      case URL_FETCH_BLOCKED_TOO_BIG:
+         url_task_finish_msg(task,
+               msg_hash_to_str(url_task_blocked_msg(d->result)), true);
          break;
       case URL_FETCH_TOO_BIG:
       case URL_FETCH_FAILED:
@@ -799,6 +819,11 @@ bool task_url_content_fetch_cli(const char *url,
          break;
       case URL_FETCH_NOT_A_FILE:
          url_cli_error(msg_hash_to_str(MSG_URL_CONTENT_NOT_A_FILE));
+         break;
+      case URL_FETCH_BLOCKED_PROGRAM:
+      case URL_FETCH_BLOCKED_ARCHIVE:
+      case URL_FETCH_BLOCKED_TOO_BIG:
+         url_cli_error(msg_hash_to_str(url_task_blocked_msg(res)));
          break;
       case URL_FETCH_CATALOG: /* game lists need the menu */
          url_cli_error(msg_hash_to_str(MSG_URL_CATALOG_CLI));

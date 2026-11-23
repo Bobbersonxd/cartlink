@@ -36,7 +36,10 @@ enum url_fetch_result
    URL_FETCH_NOT_A_FILE,    /* got an HTML page */
    URL_FETCH_TOO_BIG,       /* allocation failed */
    URL_FETCH_FAILED,        /* network / HTTP error, msg in err */
-   URL_FETCH_CATALOG        /* a Caddy folder listing (game list) */
+   URL_FETCH_CATALOG,       /* a Caddy folder listing (game list) */
+   URL_FETCH_BLOCKED_PROGRAM, /* a program, not a game: nothing kept */
+   URL_FETCH_BLOCKED_ARCHIVE, /* archive with a program/unsafe path/bomb, or unreadable */
+   URL_FETCH_BLOCKED_TOO_BIG  /* archive unpacks to more than 2 GiB */
 };
 
 typedef void (*url_fetch_progress_t)(size_t done, size_t total, void *ud);
@@ -59,7 +62,12 @@ typedef void (*url_fetch_progress_t)(size_t done, size_t total, void *ud);
  * resolved against the URL after redirects; free it with
  * url_catalog_free), or with NULL err says to open it from the menu.
  * catalog_or_null is zeroed first, so freeing it is always safe. Other
- * JSON is a file as before. A list is never answered from the cache. */
+ * JSON is a file as before. A list is never answered from the cache.
+ * The body is written to the .part file as it arrives (no whole-body
+ * buffer; 2 GiB cap). Every finished download and every cache hit is
+ * checked with url_safety (not-a-game + .zip/.7z members): a refused
+ * file is deleted and BLOCKED_* returned with the reason in err. A
+ * new download is marked as from the internet (Windows). */
 enum url_fetch_result url_fetch_to_cache(const char *url, const char *cache_dir,
       const char *user_or_null, const char *pass_or_null,
       char *out_path, size_t out_len, char *challenge, size_t ch_len,

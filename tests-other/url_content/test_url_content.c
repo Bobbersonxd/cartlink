@@ -24,6 +24,7 @@
 #include "../../network/url_logins.h"
 #include "../../network/url_catalog.h"
 #include "../../network/url_servers.h"
+#include "../../network/url_safety.h"
 #include "../../frontend/clipboard.h"
 
 static int g_checks   = 0;
@@ -1484,7 +1485,285 @@ static void test_servers_root(void)
    EXPECT_STR(out, "");
 }
 
-int main(void)
+/* ---------- url_safety ---------- */
+
+static const char *g_fixtures = NULL; /* made by make_archives.py */
+static bool g_have_7z = false;
+
+/* A realistic first-bytes buffer for each console, padded to 4096. */
+static size_t make_head(uint8_t *b, size_t cap, const char *kind)
+{
+   size_t n = 4096;
+   size_t i;
+   for (i = 0; i < n && i < cap; i++)
+      b[i] = (uint8_t)((i * 31 + 7) & 0xFF);
+   if (!strcmp(kind, "gb"))
+   {
+      static const uint8_t logo[4] = {0xCE, 0xED, 0x66, 0x66};
+      b[0x100] = 0x00; b[0x101] = 0xC3; b[0x102] = 0x50; b[0x103] = 0x01;
+      memcpy(b + 0x104, logo, 4);
+   }
+   else if (!strcmp(kind, "gb-mz"))
+   {
+      /* A ROM whose first bytes happen to be "MZ", no PE header. */
+      b[0] = 'M'; b[1] = 'Z';
+      b[0x3C] = 0x10; b[0x3D] = 0x00; b[0x3E] = 0x00; b[0x3F] = 0x00;
+      b[0x10] = 0x00; b[0x11] = 0x11; b[0x12] = 0x22; b[0x13] = 0x33;
+   }
+   else if (!strcmp(kind, "nes"))
+      memcpy(b, "NES\x1a\x02\x01\x01\x00", 8);
+   else if (!strcmp(kind, "smc"))
+      memset(b, 0, 512);           /* copier header */
+   else if (!strcmp(kind, "md"))
+      memcpy(b + 0x100, "SEGA MEGA DRIVE ", 16);
+   else if (!strcmp(kind, "iso"))
+   {
+      memset(b, 0, 4096);          /* system area is zeros */
+   }
+   else if (!strcmp(kind, "cue"))
+   {
+      const char *t = "FILE \"Game (Track 1).bin\" BINARY\r\n  TRACK 01 MODE1/2352\r\n    INDEX 01 00:00:00\r\n";
+      n = strlen(t);
+      memcpy(b, t, n);
+   }
+   else if (!strcmp(kind, "chd"))
+      memcpy(b, "MComprHD\x00\x00\x00\x7c\x00\x00\x00\x05", 16);
+   else if (!strcmp(kind, "pbp"))
+      memcpy(b, "\x00PBP\x00\x00\x01\x00", 8);
+   else if (!strcmp(kind, "zip"))
+      memcpy(b, "PK\x03\x04\x14\x00\x00\x00", 8);
+   else if (!strcmp(kind, "7z"))
+      memcpy(b, "7z\xbc\xaf\x27\x1c\x00\x04", 8);
+   else if (!strcmp(kind, "bin"))
+      memcpy(b, "\x00\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x00", 12);
+   return n;
+}
+
+static void test_safety_blocks_programs(void)
+{
+   static const char *exts[] = {
+      "exe", "com", "scr", "pif", "msi", "msp", "dll", "sys", "cpl",
+      "bat", "cmd", "ps1", "psm1", "vbs", "vbe", "js", "jse", "wsf",
+      "wsh", "hta", "jar", "lnk", "url", "reg", "inf", "scf", "app",
+      "dmg", "pkg", "sh", "bash", "command", "desktop", "so", "dylib",
+      "appimage", "apk", "deb", "rpm", NULL };
+   uint8_t b[8192];
+   size_t n;
+   int i;
+
+   /* PE: "MZ" ... "PE\0\0" at e_lfanew. */
+   n = make_head(b, sizeof(b), "plain");
+   b[0] = 'M'; b[1] = 'Z';
+   b[0x3C] = 0x80; b[0x3D] = 0; b[0x3E] = 0; b[0x3F] = 0;
+   memcpy(b + 0x80, "PE\0\0", 4);
+   EXPECT(url_safety_check_file("game.gb", b, n) == URL_SAFE_PROGRAM);
+   EXPECT(url_safety_check_file("game.zip", b, n) == URL_SAFE_PROGRAM);
+
+   /* ELF. */
+   n = make_head(b, sizeof(b), "plain");
+   memcpy(b, "\x7f" "ELF\x02\x01\x01", 7);
+   EXPECT(url_safety_check_file("sneaky.gb", b, n) == URL_SAFE_PROGRAM);
+
+   /* Mach-O 64 (both byte orders) and 32, and fat. */
+   n = make_head(b, sizeof(b), "plain");
+   b[0] = 0xfe; b[1] = 0xed; b[2] = 0xfa; b[3] = 0xcf;
+   EXPECT(url_safety_check_file("game.nes", b, n) == URL_SAFE_PROGRAM);
+   b[0] = 0xcf; b[1] = 0xfa; b[2] = 0xed; b[3] = 0xfe;
+   EXPECT(url_safety_check_file("game.nes", b, n) == URL_SAFE_PROGRAM);
+   b[0] = 0xce; b[1] = 0xfa; b[2] = 0xed; b[3] = 0xfe;
+   EXPECT(url_safety_check_file("game.nes", b, n) == URL_SAFE_PROGRAM);
+   b[0] = 0xca; b[1] = 0xfe; b[2] = 0xba; b[3] = 0xbe;
+   EXPECT(url_safety_check_file("game.sfc", b, n) == URL_SAFE_PROGRAM);
+
+   /* Script. */
+   n = make_head(b, sizeof(b), "plain");
+   memcpy(b, "#!/bin/sh\n", 10);
+   EXPECT(url_safety_check_file("game.md", b, n) == URL_SAFE_PROGRAM);
+
+   /* Windows shortcut. */
+   n = make_head(b, sizeof(b), "plain");
+   memcpy(b, "\x4c\x00\x00\x00\x01\x14\x02\x00", 8);
+   EXPECT(url_safety_check_file("game.iso", b, n) == URL_SAFE_PROGRAM);
+
+   /* OLE / MSI. */
+   n = make_head(b, sizeof(b), "plain");
+   memcpy(b, "\xd0\xcf\x11\xe0", 4);
+   EXPECT(url_safety_check_file("game.bin", b, n) == URL_SAFE_PROGRAM);
+
+   /* Every listed extension, even with harmless bytes and any case. */
+   n = make_head(b, sizeof(b), "gb");
+   for (i = 0; exts[i]; i++)
+   {
+      char name[64];
+      snprintf(name, sizeof(name), "0123456789abcdef_file.%s", exts[i]);
+      EXPECT(url_safety_check_file(name, b, n) == URL_SAFE_PROGRAM);
+      snprintf(name, sizeof(name), "FILE.%s", exts[i]);
+      {
+         char *p;
+         for (p = name; *p; p++)
+            if (*p >= 'a' && *p <= 'z')
+               *p = (char)(*p - 'a' + 'A');
+      }
+      EXPECT(url_safety_check_file(name, b, n) == URL_SAFE_PROGRAM);
+   }
+   /* Windows ignores trailing dots and spaces. */
+   EXPECT(url_safety_check_file("game.exe.", b, n) == URL_SAFE_PROGRAM);
+   EXPECT(url_safety_check_file("game.exe ", b, n) == URL_SAFE_PROGRAM);
+
+   /* A bare DOS MZ (no PE) is a program only as .exe/.com/.bat. */
+   n = make_head(b, sizeof(b), "gb-mz");
+   EXPECT(url_safety_check_file("game.exe", b, n) == URL_SAFE_PROGRAM);
+   EXPECT(url_safety_check_file("game.com", b, n) == URL_SAFE_PROGRAM);
+   EXPECT(url_safety_check_file("game.bat", b, n) == URL_SAFE_PROGRAM);
+
+   /* A short file is the whole file. */
+   EXPECT(url_safety_check_file("x.gb", (const uint8_t*)"\x7f" "ELF", 4)
+         == URL_SAFE_PROGRAM);
+}
+
+static void test_safety_allows_games(void)
+{
+   static const char *names[][2] = {
+      {"game.gb", "gb"}, {"game.gbc", "gb"}, {"game.nes", "nes"},
+      {"game.sfc", "plain"}, {"game.smc", "smc"}, {"game.md", "md"},
+      {"game.bin", "bin"}, {"game.cue", "cue"}, {"game.iso", "iso"},
+      {"game.chd", "chd"}, {"game.pbp", "pbp"}, {"game.zip", "zip"},
+      {"game.7z", "7z"}, {"GAME.GB", "gb"}, {"game.gb", "gb-mz"},
+      {"0123456789abcdef_Game (World).sfc", "plain"},
+      {"game", "plain"}, {NULL, NULL} };
+   uint8_t b[8192];
+   int i;
+   for (i = 0; names[i][0]; i++)
+   {
+      size_t n = make_head(b, sizeof(b), names[i][1]);
+      enum url_safety_verdict v = url_safety_check_file(names[i][0], b, n);
+      if (v != URL_SAFE_OK)
+         printf("  (blocked %s / %s: %d)\n", names[i][0], names[i][1], (int)v);
+      EXPECT(v == URL_SAFE_OK);
+   }
+   /* Tiny files and an empty head are fine. */
+   EXPECT(url_safety_check_file("x.gb", (const uint8_t*)"M", 1) == URL_SAFE_OK);
+   EXPECT(url_safety_check_file("x.gb", (const uint8_t*)"MZ", 2) == URL_SAFE_OK);
+   EXPECT(url_safety_check_file("x.gb", NULL, 0) == URL_SAFE_OK);
+   /* "MZ" whose e_lfanew points past the head: not provably PE. */
+   {
+      size_t n = make_head(b, sizeof(b), "plain");
+      b[0] = 'M'; b[1] = 'Z';
+      b[0x3C] = 0x00; b[0x3D] = 0x00; b[0x3E] = 0x10; b[0x3F] = 0x00;
+      EXPECT(url_safety_check_file("x.gb", b, n) == URL_SAFE_OK);
+   }
+   /* A name with no extension or a dot-only part. */
+   EXPECT(url_safety_check_file("exe", b, 16) == URL_SAFE_OK);
+   EXPECT(url_safety_check_file("game.exe.gb", b, 16) == URL_SAFE_OK);
+}
+
+static enum url_safety_verdict fixture(const char *name)
+{
+   char path[1024];
+   snprintf(path, sizeof(path), "%s/%s", g_fixtures, name);
+   return url_safety_check_archive(path);
+}
+
+#define EXPECT_FIX(name, verdict) do { \
+   enum url_safety_verdict v_ = fixture(name); \
+   if (v_ != (verdict)) \
+      printf("  (%s gave %d)\n", name, (int)v_); \
+   EXPECT(v_ == (verdict)); \
+} while (0)
+
+static void test_safety_archive_zip(void)
+{
+   EXPECT_FIX("ok.zip", URL_SAFE_OK);
+   EXPECT_FIX("ok_stored.zip", URL_SAFE_OK);
+   EXPECT_FIX("ok_zip64.zip", URL_SAFE_OK);
+   EXPECT_FIX("dosgame.zip", URL_SAFE_OK);
+   EXPECT_FIX("many_ok.zip", URL_SAFE_OK);
+   EXPECT_FIX("tiny_ratio.zip", URL_SAFE_OK);
+   EXPECT_FIX("exactly2g.zip", URL_SAFE_OK);
+
+   EXPECT_FIX("slip_dotdot.zip", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("slip_abs.zip", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("slip_drive.zip", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("slip_bslash.zip", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("pe_member.zip", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("pe_named_bin.zip", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("pe_stored.zip", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("pe_far.zip", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("elf_member.zip", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("lnk_member.zip", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("app_member.zip", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("script_member.zip", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("bomb.zip", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("many.zip", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("toobig.zip", URL_SAFE_ARCHIVE_TOO_BIG);
+   EXPECT_FIX("broken.zip", URL_SAFE_UNREADABLE);
+   EXPECT_FIX("missing.zip", URL_SAFE_UNREADABLE);
+}
+
+static void test_safety_archive_7z(void)
+{
+   if (!g_have_7z)
+   {
+      printf("SKIP: .7z archive tests (no 7z tool made the fixtures)\n");
+      return;
+   }
+   EXPECT_FIX("ok.7z", URL_SAFE_OK);
+   EXPECT_FIX("dosgame.7z", URL_SAFE_OK);
+   EXPECT_FIX("pe.7z", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("pe_named_bin.7z", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("elf.7z", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("lnk.7z", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("bomb.7z", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("many.7z", URL_SAFE_ARCHIVE_TRAP);
+   EXPECT_FIX("broken.7z", URL_SAFE_UNREADABLE);
+}
+
+static void test_safety_archive_other(void)
+{
+   char path[1024];
+   /* Not an archive by name: nothing to check. */
+   snprintf(path, sizeof(path), "%s/ok.zip", g_fixtures);
+   EXPECT(url_safety_check_archive("/nonexistent/game.gb") == URL_SAFE_OK);
+   /* Upper-case extension is still a zip. */
+   {
+      char up[1024];
+      snprintf(up, sizeof(up), "%s/SLIP.ZIP", g_fixtures);
+      {
+         char src[1024];
+         FILE *in, *out;
+         char buf[4096];
+         size_t got;
+         snprintf(src, sizeof(src), "%s/slip_dotdot.zip", g_fixtures);
+         in  = fopen(src, "rb");
+         out = fopen(up, "wb");
+         while (in && out && (got = fread(buf, 1, sizeof(buf), in)) > 0)
+            fwrite(buf, 1, got, out);
+         if (in) fclose(in);
+         if (out) fclose(out);
+      }
+      EXPECT(url_safety_check_archive(up) == URL_SAFE_ARCHIVE_TRAP);
+      remove(up);
+   }
+   EXPECT(url_safety_check_archive(NULL) == URL_SAFE_UNREADABLE);
+}
+
+static void test_safety_zone_text(void)
+{
+   char t[512];
+   url_safety_zone_text(t, sizeof(t), "https://user:pw@example.com:8443/a/b.gb?x=1#sha256=ab");
+   EXPECT_STR(t, "[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=https://example.com:8443/a/b.gb?x=1\r\n");
+   url_safety_zone_text(t, sizeof(t), "http://example.com/x@y.gb");
+   EXPECT_STR(t, "[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=http://example.com/x@y.gb\r\n");
+   url_safety_zone_text(t, sizeof(t), "http://a@b@example.com");
+   EXPECT_STR(t, "[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=http://example.com\r\n");
+   url_safety_zone_text(t, sizeof(t), "http://example.com/a\r\nZoneId=0");
+   EXPECT_STR(t, "[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=http://example.com/aZoneId=0\r\n");
+   /* Marking is a no-op off Windows and never crashes. */
+   url_safety_mark_downloaded("/nonexistent/x.gb", "http://example.com/x.gb");
+   url_safety_mark_downloaded(NULL, NULL);
+}
+
+int main(int argc, char **argv)
 {
    test_fix_link();
    test_cache_name();
@@ -1523,6 +1802,26 @@ int main(void)
    test_servers_add_top_no_write();
    test_servers_windows_replace();
    test_logins_windows_replace();
+   test_safety_blocks_programs();
+   test_safety_allows_games();
+   test_safety_zone_text();
+   if (argc >= 2)
+   {
+      char probe[1024];
+      FILE *f;
+      g_fixtures = argv[1];
+      snprintf(probe, sizeof(probe), "%s/ok.7z", g_fixtures);
+      if ((f = fopen(probe, "rb")))
+      {
+         g_have_7z = true;
+         fclose(f);
+      }
+      test_safety_archive_zip();
+      test_safety_archive_7z();
+      test_safety_archive_other();
+   }
+   else
+      printf("SKIP: archive tests (no fixture folder given)\n");
 
    if (g_failures)
    {

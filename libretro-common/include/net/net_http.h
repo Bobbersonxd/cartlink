@@ -68,6 +68,20 @@ void net_http_connection_set_verify_tls(struct http_connection_t *conn, bool ver
  * request; net_http_too_big() then returns true. */
 void net_http_connection_set_max_body(struct http_connection_t *conn, size_t max_body);
 
+struct string_list;
+
+/* Default NULL (the body is kept in memory for net_http_data). When
+ * set, the body of every response is handed to cb as it arrives, in
+ * order, and not kept: net_http_data then returns no body. cb gets the
+ * response's status and headers (owned by net_http, valid during the
+ * call) so it can skip bodies it does not want (e.g. of a 3xx or
+ * 401). Returning false fails the request. max_body still applies
+ * (to the bytes handed out); progress counts them. */
+typedef bool (*net_http_body_cb_t)(void *userdata, int status,
+      const struct string_list *headers, const uint8_t *data, size_t len);
+void net_http_connection_set_body_cb(struct http_connection_t *conn,
+      net_http_body_cb_t cb, void *userdata);
+
 void net_http_connection_set_content(struct http_connection_t *conn, const char *content_type,
       size_t content_length, const void *content);
 

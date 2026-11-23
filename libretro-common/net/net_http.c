@@ -114,6 +114,9 @@ struct http_t
    size_t max_body;   /* 0 = no limit */
    bool verify_tls;   /* opt-in: TLS certificate must verify */
    int tls_error;     /* enum net_http_tls_error */
+   net_http_body_cb_t body_cb; /* opt-in: body handed out as it arrives */
+   void *body_ud;
+   size_t sunk;       /* body bytes already handed to body_cb */
 
    struct conn_pool_entry *conn;
    bool ssl;
@@ -136,6 +139,8 @@ struct http_connection_t
    char *headers;
    size_t contentlength; /* ptr alignment */
    size_t max_body;
+   net_http_body_cb_t body_cb;
+   void *body_ud;
    int port;
    bool ssl;
    bool no_redirect;
@@ -579,6 +584,16 @@ void net_http_connection_set_max_body(
       conn->max_body = max_body;
 }
 
+void net_http_connection_set_body_cb(struct http_connection_t *conn,
+      net_http_body_cb_t cb, void *userdata)
+{
+   if (conn)
+   {
+      conn->body_cb = cb;
+      conn->body_ud = userdata;
+   }
+}
+
 void net_http_connection_set_headers(
       struct http_connection_t *conn, const char *headers)
 {
@@ -897,6 +912,8 @@ struct http_t *net_http_new(struct http_connection_t *conn)
    state->no_redirect           = conn->no_redirect;
    state->max_body              = conn->max_body;
    state->verify_tls            = conn->verify_tls;
+   state->body_cb               = conn->body_cb;
+   state->body_ud               = conn->body_ud;
 
    state->response.status  = -1;
    state->response.buflen  = 64 * 1024;  /* Start with larger buffer to reduce reallocations */
@@ -1266,6 +1283,50 @@ static void net_http_shrink(struct response *response, size_t len)
    }
 }
 
+/* With a body callback: hands the body bytes decoded so far to it
+ * and drops them from the buffer, so the buffer stays small whatever
+ * the body size. Chunked bodies keep a partial chunk-size line. */
+static bool net_http_sink_flush(struct http_t *state)
+{
+   struct response *response = (struct response*)&state->response;
+   size_t n;
+
+   if (!state->body_cb || response->part < P_BODY)
+      return true;
+   if (response->bodytype == T_CHUNK && response->part != P_BODY)
+      n = response->len;       /* data[len..pos) is a chunk-size line */
+   else
+      n = response->pos;
+   if (!n)
+      return true;
+   if (state->max_body && n > state->max_body - state->sunk)
+   {
+      state->too_big = true;
+      state->err     = true;
+      return false;
+   }
+   if (!state->body_cb(state->body_ud, response->status,
+            response->headers, (const uint8_t*)response->data, n))
+   {
+      state->err = true;
+      return false;
+   }
+   state->sunk += n;
+   if (response->bodytype == T_CHUNK && response->part != P_BODY)
+   {
+      memmove(response->data, response->data + n, response->pos - n);
+      response->pos -= n;
+      response->len  = 0;
+   }
+   else
+   {
+      if (response->bodytype == T_LEN)
+         response->len -= n;   /* len = what is still to come */
+      response->pos = 0;
+   }
+   return true;
+}
+
 static ssize_t net_http_receive_header(struct http_t *state, ssize_t len)
 {
    struct response *response = (struct response*)&state->response;
@@ -1368,6 +1429,9 @@ static ssize_t net_http_receive_header(struct http_t *state, ssize_t len)
             state->err     = true;
             return -1;
          }
+         /* Streamed: the small buffer is reused, never the whole body. */
+         if (state->body_cb)
+            return len;
          tmp = (char*)realloc(response->data, response->len);
          if (!tmp && response->len)
          {
@@ -1399,9 +1463,9 @@ static bool net_http_receive_body(struct http_t *state, ssize_t newlen)
       if (response->bodytype != T_FULL)
          return false;
       response->part      = P_DONE;
-      if (response->buflen != response->len)
+      if (!state->body_cb && response->buflen != response->len)
          net_http_shrink(response, response->len);
-      return true;
+      return net_http_sink_flush(state);
    }
 
 parse_again:
@@ -1444,8 +1508,9 @@ parse_again:
                {
                   response->part = P_DONE;
                   response->len  = response->pos;
-                  net_http_shrink(response, response->len);
-                  return true;
+                  if (!state->body_cb)
+                     net_http_shrink(response, response->len);
+                  return net_http_sink_flush(state);
                }
                goto parse_again;
             }
@@ -1474,12 +1539,16 @@ parse_again:
       else if (response->pos == response->len)
       {
          response->part = P_DONE;
-         if (response->buflen != response->len)
+         if (!state->body_cb && response->buflen != response->len)
             net_http_shrink(response, response->len);
-         return true;
+         return net_http_sink_flush(state);
       }
    }
 
+   /* Hand out what is complete before growing: a streamed body then
+    * never needs a bigger buffer. */
+   if (!net_http_sink_flush(state))
+      return false;
    if (response->pos >= response->buflen)
    {
       if (!net_http_grow(state, response->buflen * 2))
@@ -1548,6 +1617,7 @@ static bool net_http_redirect(struct http_t *state, const char *location)
    state->response.pos       = 0;
    state->response.len       = 0;
    state->response.bodytype  = T_FULL;
+   state->sunk               = 0;
    /* after this, assume location is invalid */
    string_list_deinitialize(state->response.headers);
    string_list_initialize(state->response.headers);
@@ -1593,16 +1663,22 @@ bool net_http_update(struct http_t *state, size_t* progress, size_t* total)
 
    response = (struct response*)&state->response;
 
+   {
+      size_t room = response->buflen - response->pos;
+      /* The small streaming buffer must not read past a sized body. */
+      if (     state->body_cb && response->part == P_BODY
+            && response->bodytype == T_LEN
+            && room > response->len - response->pos)
+         room = response->len - response->pos;
 #ifdef HAVE_SSL
-   if (state->ssl && state->conn->ssl_ctx)
-      _len = ssl_socket_receive_all_nonblocking(state->conn->ssl_ctx, &state->err,
-            (uint8_t*)response->data + response->pos,
-            response->buflen - response->pos);
-   else
+      if (state->ssl && state->conn->ssl_ctx)
+         _len = ssl_socket_receive_all_nonblocking(state->conn->ssl_ctx, &state->err,
+               (uint8_t*)response->data + response->pos, room);
+      else
 #endif
-      _len = socket_receive_all_nonblocking(state->conn->fd, &state->err,
-            (uint8_t*)response->data + response->pos,
-            response->buflen - response->pos);
+         _len = socket_receive_all_nonblocking(state->conn->fd, &state->err,
+               (uint8_t*)response->data + response->pos, room);
+   }
 
    if (response->part < P_BODY)
    {
@@ -1640,12 +1716,12 @@ bool net_http_update(struct http_t *state, size_t* progress, size_t* total)
    }
 
    if (progress)
-      *progress = response->pos;
+      *progress = state->sunk + response->pos;
 
    if (total)
    {
       if (response->bodytype == T_LEN)
-         *total = response->len;
+         *total = state->sunk + response->len;
       else
          *total = 0;
    }

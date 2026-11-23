@@ -408,6 +408,18 @@ MSG_HASH(
    "This link is a game list. Open it from the menu: Load Content > Load from URL."
    )
 MSG_HASH(
+   MSG_URL_SAFETY_PROGRAM,
+   "Blocked: this link gives a program, not a game."
+   )
+MSG_HASH(
+   MSG_URL_SAFETY_ARCHIVE,
+   "Blocked: this archive contains a program or an unsafe file path."
+   )
+MSG_HASH(
+   MSG_URL_SAFETY_TOO_BIG,
+   "Blocked: this archive unpacks to more than 2 GB."
+   )
+MSG_HASH(
    MENU_ENUM_LABEL_VALUE_OPEN_ARCHIVE,
    "Browse Archive"
    )
