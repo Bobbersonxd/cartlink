@@ -21,6 +21,21 @@ to libretro. Licence: GNU GPL v3 or later, the same as RetroArch
 > provide, link to or help find games.** It contains no games, BIOS files
 > or links to them.
 
+## Getting started
+
+You do **not** need RetroArch installed: Cartlink is a complete program
+on its own. It starts without any cores (the emulators), so on first run:
+
+1. Download Cartlink from [Releases](https://github.com/Bobbersonxd/cartlink/releases)
+   and unzip it (Windows: run `cartlink.exe`; Linux: run `./cartlink`).
+2. **Main Menu → Online Updater → Update Assets**, then **Update Core Info Files**.
+3. **Online Updater → Core Downloader**: download a core for each system you
+   want to play (for example *Gambatte* for Game Boy).
+4. **Load Content → Load from URL** and paste a link.
+
+Already have RetroArch? You can reuse its cores instead of downloading
+them again; see [Cores and assets](#cores-and-assets).
+
 ## What Cartlink adds
 
 - **Load Content → Load from URL**: type a link or paste it with
