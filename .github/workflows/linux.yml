@@ -21,7 +21,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config python3 \
             openssl zlib1g-dev libx11-dev libxext-dev libxrandr-dev \
-            libxinerama-dev libxxf86vm-dev libgl-dev libegl-dev \
+            libxinerama-dev libxxf86vm-dev libx11-xcb-dev libgl-dev libegl-dev \
             libasound2-dev libpulse-dev libudev-dev libwayland-dev \
             wayland-protocols libxkbcommon-dev p7zip-full
 
