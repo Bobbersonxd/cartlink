@@ -78,7 +78,6 @@
     <GenerateTestArtifacts>True</GenerateTestArtifacts>
     <HoursBetweenUpdateChecks>0</HoursBetweenUpdateChecks>
     <AppxPackageSigningEnabled>True</AppxPackageSigningEnabled>
-    <PackageCertificateKeyFile>RetroArch-msvcUWP_TemporaryKey.pfx</PackageCertificateKeyFile>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
     <Link>
@@ -282,7 +281,6 @@
       <DeploymentContent>true</DeploymentContent>
       <Link>%(Filename)%(Extension)</Link>
     </None>
-    <None Include="RetroArch-msvcUWP_TemporaryKey.pfx" />
   </ItemGroup>
   <ItemGroup Condition="'$(Configuration)' == 'ReleaseANGLE' or '$(Configuration)' == 'DebugANGLE'">
     <None Include="ANGLE\$(Platform)\*.dll">
